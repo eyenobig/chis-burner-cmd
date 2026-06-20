@@ -12,11 +12,24 @@ chis-burner-cmd/
 │  │  ├─ CartLink.cs     串口协议层（带超时 + 自动重连）
 │  │  ├─ GbaFlasher.cs   高层烧录操作
 │  │  └─ README.md       引擎说明
-│  └─ Cli/           控制台前端，编译输出 cfburn.exe
-│     └─ Program.cs
+│  ├─ Cli/           控制台前端，编译输出 cfburn.exe
+│  │  └─ Program.cs
+│  └─ features/      按功能拆分的模块 + 各自 README（见下）
 ├─ chis-burner-cmd.sln
 └─ README.md
 ```
+
+## 功能模块
+
+详见 [src/features/README.md](src/features/README.md)。
+
+| # | 功能 | 状态 |
+|---|------|------|
+| 1 | [识别烧录器](src/features/device_detect/README.md) | ✅ 已实现 |
+| 2 | [GBA 卡带 读/烧/擦 ROM](src/features/gba_cartridge/README.md) | 🟡 部分 |
+| 3 | [GB/GBC 卡带 读/烧/擦 ROM](src/features/gb_cartridge/README.md) | 🔴 待移植 |
+| 4 | [ROM 通用操作 写/导出/校验](src/features/rom_ops/README.md) | 🟡 部分 |
+| 5 | [存档 RAM 写/导出/校验](src/features/ram_ops/README.md) | 🔴 待实现 |
 
 目标框架：.NET Framework **4.8**。无 NuGet 依赖，仅引用框架自带程序集。
 
