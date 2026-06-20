@@ -22,7 +22,7 @@ cfb info [--port COM7]  # 连接并打印芯片 ID + 容量 (省略 --port 自�
 | 能力 | 后端 API / 实现 |
 |------|----------------|
 | 串口枚举 | `System.IO.Ports.SerialPort.GetPortNames()` |
-| 解析 VID/PID | WMI `Win32_PnPEntity` → [Cli/DeviceScan.cs](../../Cli/DeviceScan.cs) |
+| 解析 VID/PID | WMI `Win32_PnPEntity` → [DeviceScan.cs](DeviceScan.cs) |
 | 识别烧录器 | 比对 `Core.CartLink.UsbVid` / `UsbPid`（0483/0721）|
 | 占用检测 | 试开串口判断是否被占用 |
 | 打开/上电/热身 | `Core.CartLink.Open / PowerOn3v3 / WarmUp` |
@@ -42,7 +42,7 @@ COM7   0483:0721   是   USB 串行设备 (COM7)  <= 烧录器
 ## 命名标识（可选）
 
 默认设备显示为通用名"USB 串行设备 (COMx)"。要让它插上就显示专属名（如 `ChisBurner (COMx)`），
-见 [../../../driver/](../../../driver/README.md)：装个 INF（PC 端）或改固件 iProduct 描述符。
+见 [../../../../driver/](../../../../driver/README.md)：装个 INF（PC 端）或改固件 iProduct 描述符。
 注意：`cfb` 靠 VID/PID 识别，**不依赖**这个显示名。
 
 ## 技术要点

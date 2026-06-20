@@ -3,9 +3,8 @@ using System.Collections.Generic;
 using System.IO.Ports;
 using System.Management;
 using System.Text.RegularExpressions;
-using Core;
 
-namespace Cli
+namespace Core
 {
     /// <summary>一个串口设备的信息。</summary>
     internal sealed class PortInfo
@@ -30,7 +29,6 @@ namespace Cli
         /// <summary>列出系统所有串口（含 VID/PID）。</summary>
         public static List<PortInfo> Enumerate()
         {
-            // 先收集裸 COM 口名，WMI 命中后逐个剔除，剩下的就是 WMI 未覆盖的
             var bare = new HashSet<string>(SerialPort.GetPortNames(), StringComparer.OrdinalIgnoreCase);
             var result = new List<PortInfo>();
 
@@ -61,11 +59,11 @@ namespace Cli
             }
             catch (Exception e)
             {
-                Console.Error.WriteLine("WMI 查询失败, 仅按串口名列出: " + e.Message);
+                Console.Error.WriteLine("WMI: " + e.Message);
             }
 
             foreach (var p in bare)
-                result.Add(new PortInfo { Port = p, Name = "(未知)" });
+                result.Add(new PortInfo { Port = p, Name = L.T("detect.unknown_dev") });
 
             result.Sort((a, b) => string.CompareOrdinal(a.Port, b.Port));
             return result;

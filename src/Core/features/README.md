@@ -1,6 +1,6 @@
 ﻿# 功能模块总览
 
-cfb 按功能拆成模块，每个一个目录 + README。底层引擎在 [../Core](../Core)，命令行前端在 [../Cli](../Cli)。
+cfb 按功能拆成模块，每个一个目录 + README。引擎与入口都在上层 [Core 项目](..)（单一项目编译成 `cfb.exe`），语言包在 [../i18n](../i18n)。
 
 ROM / RAM 操作在 GBA 与 GB 上实现方式不同（GBA 线性 NOR Flash；GB 走 MBC bank 切换），
 因此**归到各自平台内部**，不再平铺。

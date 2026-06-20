@@ -38,4 +38,4 @@ cfb gba rom verify --port COM7 --ref game.gba
 - `BurnOptions`：`ChipErase` / `UnlockPpb` / `VerifyAfter` / `ReconnectEveryFails` / `MaxTriesPerPacket` / `MaxRepairRounds`。
 - `BurnResult` 精确报告 `FirstBadAddress` 与 `MismatchBytes`，不死等。
 - ⚠️ 已知硬件现象：烧 16MB 时前 ~6–8MB 稳定，超过后设备可能持续编程后停止应答
-  （实测停在 0x807000 附近，非固定坏块，偏供电/时序/接触）。见 [../../../Core/README.md](../../../Core/README.md)。
+  （实测停在 0x807000 附近，非固定坏块，偏供电/时序/接触）。见 [Core README](../../../README.md)。

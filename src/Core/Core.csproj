@@ -1,13 +1,31 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <OutputType>Exe</OutputType>
     <TargetFramework>net48</TargetFramework>
     <RootNamespace>Core</RootNamespace>
-    <AssemblyName>Core</AssemblyName>
+    <AssemblyName>cfb</AssemblyName>
     <LangVersion>8.0</LangVersion>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <Deterministic>false</Deterministic>
+
+    <!-- 构建产物输出到仓库根 build/<Configuration>/，不要埋在 bin/Release/net48 深处 -->
+    <OutputPath>..\..\build\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WMI: 把 COM 口映射到 USB VID/PID 以识别烧录器 -->
+    <Reference Include="System.Management" />
+    <!-- JSON: 解析语言包 (JavaScriptSerializer) -->
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 语言包嵌入程序集；LogicalName 让运行时按 "<lang>.json" 取流 -->
+    <EmbeddedResource Include="i18n\zh-CN.json"><LogicalName>zh-CN.json</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="i18n\en.json"><LogicalName>en.json</LogicalName></EmbeddedResource>
+  </ItemGroup>
 
   <!-- .NET Framework 下 System.IO.Ports.SerialPort 位于 System.dll，无需单独引用 -->
 

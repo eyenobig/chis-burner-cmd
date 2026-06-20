@@ -1,7 +1,10 @@
 ﻿# Core
 
-碳酸丐烧录器的**协议 + 烧录引擎**，从上位机里抽出来的独立 DLL（.NET Framework 4.8）。
-由 `Cli`（cfb 命令行工具）引用；与具体前端（曾经的 WinForms 上位机）无关。
+碳酸丐烧录器的**协议 + 烧录引擎**（.NET Framework 4.8），同时也是整个 `cfb` 命令行工具的
+单一项目：引擎（`CartLink` / `GbaFlasher`）、命令入口（`Program.cs`）、各功能命令
+（`features/`）、语言包（`i18n/`）都在本项目内，直接编译成 `cfb.exe`。
+
+本文件只讲**引擎**部分；命令与功能见 [features/README.md](features/README.md)。
 
 ## 为什么独立成 DLL
 
@@ -46,10 +49,10 @@ var result = flasher.Burn(rom, rom.Length, new BurnOptions {
 Console.WriteLine(result.Success ? "OK" : $"停在 0x{result.FirstBadAddress:X8}");
 ```
 
-## 在 cmd 工具中调用
+## 在命令里调用
 
-控制台前端见同级的 `../Cli`（编译输出 `cfb.exe`）：解析参数后调用
-`GbaFlasher.Burn(...)` 即可。用法见仓库根 [README.md](../../README.md)。
+烧录命令实现见 [features/gba/rom/BurnCommand.cs](features/gba/rom/BurnCommand.cs)：解析参数后
+调用 `GbaFlasher.Burn(...)`。整体用法见仓库根 [README.md](../../README.md)。
 
 ## 已知硬件现象（实测 S29GL256 / 32MB）
 
