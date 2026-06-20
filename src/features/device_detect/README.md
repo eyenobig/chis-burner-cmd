@@ -34,6 +34,17 @@ COM7   0483:0721   是   USB 串行设备 (COM7)  <= 烧录器
 芯片 ID: 01 00 7E 22 22 22 01 22   容量: 32 MB   写缓冲: 32B   扇区: 128KB x 256
 ```
 
+## 自动识别（无需 --port）
+
+所有命令省略 `--port` 时都会自动按 VID/PID 选用烧录器：`cfb info`、`cfb burn --rom x.gba`
+直接就能跑。只有同时插多台、或想指定某口时才需要 `--port`。
+
+## 命名标识（可选）
+
+默认设备显示为通用名"USB 串行设备 (COMx)"。要让它插上就显示专属名（如 `ChisBurner (COMx)`），
+见 [../../../driver/](../../../driver/README.md)：装个 INF（PC 端）或改固件 iProduct 描述符。
+注意：`cfb` 靠 VID/PID 识别，**不依赖**这个显示名。
+
 ## 技术要点
 
 - VID 0483 = STMicroelectronics（USB CDC 虚拟串口）。

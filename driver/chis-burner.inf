@@ -1,0 +1,43 @@
+; chis-burner.inf
+; 给碳酸丐烧录器 (USB CDC, VID_0483 / PID_0721) 一个友好名称。
+; 安装后, 设备管理器与 `cfb detect` 里会显示 "ChisBurner (COMx)"
+; 而不是默认的 "USB 串行设备 (COMx)"。仍使用系统自带的 usbser.sys 驱动。
+;
+; 安装(需管理员):
+;   1) 设备管理器 -> 右键设备 -> 更新驱动 -> 浏览 -> 选本文件夹; 或
+;   2) PowerShell(管理员):  pnputil /add-driver chis-burner.inf /install
+; Win11 对未签名 INF 会有警告, 选择仍然安装即可。
+;
+; 想显示中文名? 把 [Strings] 里的 DESCRIPTION 改成中文, 并将本文件
+; 另存为 "Unicode (UTF-16 LE)" 编码, 否则中文会乱码。
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = Ports
+ClassGuid   = {4d36e978-e325-11ce-bfc1-08002be10318}
+Provider    = %PROVIDER%
+DriverVer   = 06/21/2026,1.0.0.0
+
+[Manufacturer]
+%PROVIDER% = DeviceList,NTamd64
+
+[DeviceList.NTamd64]
+%DESCRIPTION% = DriverInstall, USB\VID_0483&PID_0721
+
+[DriverInstall.NT]
+include   = mdmcpq.inf
+CopyFiles = FakeModemCopyFileSection
+AddReg    = DriverInstall.NT.AddReg
+
+[DriverInstall.NT.AddReg]
+HKR,,DevLoader,,*ntkern
+HKR,,NTMPDriver,,usbser.sys
+HKR,,EnumPropPages32,,"MsPorts.dll,SerialPortPropPageProvider"
+
+[DriverInstall.NT.Services]
+include     = mdmcpq.inf
+AddService  = usbser, 0x00000002, LowerFilter_Service_Inst
+
+[Strings]
+PROVIDER    = "Chis"
+DESCRIPTION = "ChisBurner (cfb)"
