@@ -12,6 +12,10 @@ namespace Core
     /// </summary>
     public sealed class CartLink : IDisposable
     {
+        /// <summary>本烧录器的 USB 标识（STMicroelectronics CDC 虚拟串口）。</summary>
+        public const string UsbVid = "0483";
+        public const string UsbPid = "0721";
+
         private readonly string _portName;
         private SerialPort _sp;
 

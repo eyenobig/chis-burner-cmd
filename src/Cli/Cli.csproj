@@ -13,4 +13,9 @@
     <ProjectReference Include="..\Core\Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- WMI: 把 COM 口映射到 USB VID/PID 以识别烧录器 -->
+    <Reference Include="System.Management" />
+  </ItemGroup>
+
 </Project>

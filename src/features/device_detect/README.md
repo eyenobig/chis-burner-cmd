@@ -10,23 +10,29 @@
 | 识别烧录器 | 按 **USB VID 0483 / PID 0721** 定位本烧录器所在的 COM 口 |
 | 读设备信息 | 上电后读 Flash 芯片 **ID + CFI**（容量 / 写缓冲 / 扇区大小） |
 
-## 对应命令（规划）
+## 命令（✅ 已实现）
 
 ```
-cfburn detect              # 列出所有串口并标出烧录器
-cfburn info --port COM7    # 连接并打印芯片 ID + 容量
+cfburn detect              # 列出所有串口, 标出烧录器, 并显示端口是否被占用
+cfburn info [--port COM7]  # 连接并打印芯片 ID + 容量 (省略 --port 自动选烧录器)
 ```
 
-## 实现状态：✅ 已实现
+## 实现状态：✅ 已实现并实测
 
-| 能力 | 后端 API |
-|------|----------|
-| 串口枚举 | `System.IO.Ports.SerialPort.GetPortNames()`（CLI 侧） |
+| 能力 | 后端 API / 实现 |
+|------|----------------|
+| 串口枚举 | `System.IO.Ports.SerialPort.GetPortNames()` |
+| 解析 VID/PID | WMI `Win32_PnPEntity` → [Cli/DeviceScan.cs](../../Cli/DeviceScan.cs) |
+| 识别烧录器 | 比对 `Core.CartLink.UsbVid` / `UsbPid`（0483/0721）|
+| 占用检测 | 试开串口判断是否被占用 |
 | 打开/上电/热身 | `Core.CartLink.Open / PowerOn3v3 / WarmUp` |
-| 读芯片 ID | `Core.CartLink.RomReadId` |
 | 读 ID + CFI | `Core.GbaFlasher.ReadInfo` → `FlashInfo` |
 
-实测：COM7 上读到 ID `01 00 7E 22 22 22 01 22`，容量 32MB（S29GL256），写缓冲 32B，扇区 128KB×256。
+实测输出：
+```
+COM7   0483:0721   是   USB 串行设备 (COM7)  <= 烧录器
+芯片 ID: 01 00 7E 22 22 22 01 22   容量: 32 MB   写缓冲: 32B   扇区: 128KB x 256
+```
 
 ## 技术要点
 

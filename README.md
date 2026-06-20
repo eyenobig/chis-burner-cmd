@@ -26,8 +26,8 @@ chis-burner-cmd/
 | # | 功能 | 子模块 | 状态 |
 |---|------|--------|------|
 | 1 | [识别烧录器](src/features/device_detect/README.md) | — | ✅ 已实现 |
-| 2 | [GBA 卡带](src/features/gba_cartridge/README.md) | [rom](src/features/gba_cartridge/rom/README.md) / [ram](src/features/gba_cartridge/ram/README.md) | 🟡 / 🔴 |
-| 3 | [GB/GBC 卡带](src/features/gb_cartridge/README.md) | [rom](src/features/gb_cartridge/rom/README.md) / [ram](src/features/gb_cartridge/ram/README.md) | 🔴 / 🔴 |
+| 2 | [GBA](src/features/gba/README.md) | [rom](src/features/gba/rom/README.md) / [ram](src/features/gba/ram/README.md) | 🟡 / 🔴 |
+| 3 | [MBC (GB/GBC)](src/features/mbc/README.md) | [rom](src/features/mbc/rom/README.md) / [ram](src/features/mbc/ram/README.md) | 🔴 / 🔴 |
 
 目标框架：.NET Framework **4.8**。无 NuGet 依赖，仅引用框架自带程序集。
 

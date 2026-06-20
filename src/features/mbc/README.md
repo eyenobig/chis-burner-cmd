@@ -1,4 +1,4 @@
-# 功能 3 · GB / GBC 卡带
+# 功能 3 · MBC (GB / GBC)
 
 针对 **GB / GBC 卡带**的内容读写。与 GBA 的关键区别：GB 卡带通过 **MBC mapper**
 （MBC1 / MBC2 / MBC3 / MBC5 等）做 **bank 切换**，ROM 和存档 RAM 都不是线性地址空间。

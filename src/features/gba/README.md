@@ -1,4 +1,4 @@
-# 功能 2 · GBA 卡带
+# 功能 2 · GBA
 
 针对 **GBA 卡带**的内容读写。GBA 卡带是**线性地址空间**：ROM 在 NOR Flash 上（无 mapper），
 存档在独立的 SRAM / Flash / EEPROM 上。两类操作分到两个子模块：
