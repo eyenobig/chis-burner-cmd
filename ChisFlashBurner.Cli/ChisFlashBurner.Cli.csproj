@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>cfburn</AssemblyName>
+    <RootNamespace>ChisFlashBurner.Cli</RootNamespace>
+    <LangVersion>8.0</LangVersion>
+    <Deterministic>false</Deterministic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ChisFlashBurner.Core\ChisFlashBurner.Core.csproj" />
+  </ItemGroup>
+
+</Project>

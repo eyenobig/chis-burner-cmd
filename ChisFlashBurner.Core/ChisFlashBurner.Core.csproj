@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <RootNamespace>ChisFlashBurner.Core</RootNamespace>
+    <AssemblyName>ChisFlashBurner.Core</AssemblyName>
+    <LangVersion>8.0</LangVersion>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Deterministic>false</Deterministic>
+  </PropertyGroup>
+
+  <!-- .NET Framework 下 System.IO.Ports.SerialPort 位于 System.dll，无需单独引用 -->
+
+</Project>
