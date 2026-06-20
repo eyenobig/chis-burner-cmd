@@ -1,4 +1,4 @@
-# chis-burner-cmd
+﻿# chis-burner-cmd
 
 碳酸丐烧录器的**命令行版**，从原 WinForms 上位机里精简而来。
 只保留协议/烧录引擎与 CLI，去掉了图形界面。
@@ -12,7 +12,7 @@ chis-burner-cmd/
 │  │  ├─ CartLink.cs     串口协议层（带超时 + 自动重连）
 │  │  ├─ GbaFlasher.cs   高层烧录操作
 │  │  └─ README.md       引擎说明
-│  ├─ Cli/           控制台前端，编译输出 cfburn.exe
+│  ├─ Cli/           控制台前端，编译输出 cfb.exe
 │  │  └─ Program.cs
 │  └─ features/      按功能拆分的模块 + 各自 README（见下）
 ├─ chis-burner-cmd.sln
@@ -37,22 +37,24 @@ chis-burner-cmd/
 
 ```powershell
 dotnet build chis-burner-cmd.sln -c Release
-# 输出: src/Cli/bin/Release/net48/cfburn.exe
+# 输出: src/Cli/bin/Release/net48/cfb.exe
 ```
 
 或用 Visual Studio / 完整版 MSBuild 打开 `chis-burner-cmd.sln` 构建。
 
 ## 用法
 
-```
-cfburn --port COM7 --rom <file.gba> [选项]
+子命令风格（类似 adb）：
 
-选项:
-  --port <COMx>     串口 (默认 COM7)
-  --rom  <path>     要烧录的 GBA ROM
-  --log  <path>     日志文件 (默认 cfburn_<时间>.log)
-  --chip-erase      整片擦除模式 (默认逐扇区即擦即写)
-  --no-ppb          跳过 PPB 解锁
-  --no-verify       跳过校验+修复
-  -h, --help        显示帮助
 ```
+cfb <命令> [选项]
+
+命令:
+  detect                       列出所有串口并标出烧录器
+  info  [--port COMx]          连接并读取芯片 ID + 容量 (省略 --port 自动选烧录器)
+  burn  --port COMx --rom <f>  烧录 GBA ROM
+  help  [命令]                 显示帮助 (如 `cfb help burn`)
+```
+
+burn 选项：`--port` `--rom` `--log` `--chip-erase` `--no-ppb` `--no-verify`
+（详见 `cfb help burn`）。旧用法 `cfb --port COM7 --rom x.gba` 仍兼容。

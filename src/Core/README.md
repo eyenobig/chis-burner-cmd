@@ -1,7 +1,7 @@
-# Core
+﻿# Core
 
 碳酸丐烧录器的**协议 + 烧录引擎**，从上位机里抽出来的独立 DLL（.NET Framework 4.8）。
-由 `Cli`（cfburn 命令行工具）引用；与具体前端（曾经的 WinForms 上位机）无关。
+由 `Cli`（cfb 命令行工具）引用；与具体前端（曾经的 WinForms 上位机）无关。
 
 ## 为什么独立成 DLL
 
@@ -48,7 +48,7 @@ Console.WriteLine(result.Success ? "OK" : $"停在 0x{result.FirstBadAddress:X8}
 
 ## 在 cmd 工具中调用
 
-控制台前端见同级的 `../Cli`（编译输出 `cfburn.exe`）：解析参数后调用
+控制台前端见同级的 `../Cli`（编译输出 `cfb.exe`）：解析参数后调用
 `GbaFlasher.Burn(...)` 即可。用法见仓库根 [README.md](../../README.md)。
 
 ## 已知硬件现象（实测 S29GL256 / 32MB）

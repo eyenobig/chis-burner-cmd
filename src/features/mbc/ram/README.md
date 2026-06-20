@@ -1,4 +1,4 @@
-# GB/GBC · 存档 RAM 读写
+﻿# GB/GBC · 存档 RAM 读写
 
 GB / GBC 卡带**电池存档 RAM** 的导出（备份）/ 写入（还原）/ 校验。RAM 同样经 MBC 访问。
 
@@ -13,9 +13,9 @@ GB / GBC 卡带**电池存档 RAM** 的导出（备份）/ 写入（还原）/ �
 ## 对应命令（规划）
 
 ```
-cfburn gb ram export --port COM7 --out save.sav
-cfburn gb ram write  --port COM7 --in  save.sav
-cfburn gb ram verify --port COM7 --ref save.sav
+cfb mbc ram export --port COM7 --out save.sav
+cfb mbc ram write  --port COM7 --in  save.sav
+cfb mbc ram verify --port COM7 --ref save.sav
 ```
 
 ## 实现状态：🔴 待实现（依赖 MBC 层移植）

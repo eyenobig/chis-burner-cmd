@@ -3,7 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net48</TargetFramework>
-    <AssemblyName>cfburn</AssemblyName>
+    <AssemblyName>cfb</AssemblyName>
     <RootNamespace>Cli</RootNamespace>
     <LangVersion>8.0</LangVersion>
     <Deterministic>false</Deterministic>

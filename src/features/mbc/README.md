@@ -1,4 +1,4 @@
-# 功能 3 · MBC (GB / GBC)
+﻿# 功能 3 · MBC (GB / GBC)
 
 针对 **GB / GBC 卡带**的内容读写。与 GBA 的关键区别：GB 卡带通过 **MBC mapper**
 （MBC1 / MBC2 / MBC3 / MBC5 等）做 **bank 切换**，ROM 和存档 RAM 都不是线性地址空间。
@@ -12,7 +12,7 @@
 
 - 前置：先经[功能 1 · 识别烧录器](../device_detect/README.md)连上（`Core.CartLink` 协议层与平台无关，可复用）。
 - 一切操作都要先**探测 MBC 类型**（读卡带头 `0x0147`），再据此切 bank。
-- 命令分开：`cfburn gb rom …` / `cfburn gb ram …`。
+- 命令分开：`cfb mbc rom …` / `cfb mbc ram …`。
 
 ## 实现状态：🔴 待移植
 

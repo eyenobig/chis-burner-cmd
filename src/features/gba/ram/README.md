@@ -1,4 +1,4 @@
-# GBA · 存档 RAM 读写
+﻿# GBA · 存档 RAM 读写
 
 GBA 卡带**存档**的导出（备份）/ 写入（还原）/ 校验。
 
@@ -13,9 +13,9 @@ GBA 卡带**存档**的导出（备份）/ 写入（还原）/ 校验。
 ## 对应命令（规划）
 
 ```
-cfburn gba ram export --port COM7 --out save.sav
-cfburn gba ram write  --port COM7 --in  save.sav
-cfburn gba ram verify --port COM7 --ref save.sav
+cfb gba ram export --port COM7 --out save.sav
+cfb gba ram write  --port COM7 --in  save.sav
+cfb gba ram verify --port COM7 --ref save.sav
 ```
 
 ## 实现状态：🔴 待实现

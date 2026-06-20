@@ -1,4 +1,4 @@
-# GBA · ROM 读写
+﻿# GBA · ROM 读写
 
 GBA 卡带 ROM（线性 NOR Flash）的读取 / 烧录 / 擦除 / 导出 / 校验。
 
@@ -14,10 +14,10 @@ GBA 卡带 ROM（线性 NOR Flash）的读取 / 烧录 / 擦除 / 导出 / 校�
 ## 对应命令（规划）
 
 ```
-cfburn gba rom read   --port COM7 --out dump.gba [--size 16M]
-cfburn gba rom write  --port COM7 --rom game.gba [--chip-erase] [--no-ppb] [--no-verify]
-cfburn gba rom erase  --port COM7 [--sector 0x000000]   # 不带 --sector 为整片
-cfburn gba rom verify --port COM7 --ref game.gba
+cfb gba rom read   --port COM7 --out dump.gba [--size 16M]
+cfb gba rom write  --port COM7 --rom game.gba [--chip-erase] [--no-ppb] [--no-verify]
+cfb gba rom erase  --port COM7 [--sector 0x000000]   # 不带 --sector 为整片
+cfb gba rom verify --port COM7 --ref game.gba
 ```
 
 ## 实现状态：🟡 部分实现

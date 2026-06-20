@@ -1,4 +1,4 @@
-# GB/GBC · ROM 读写
+﻿# GB/GBC · ROM 读写
 
 GB / GBC 卡带 ROM 的读取 / 烧录 / 擦除 / 导出 / 校验。ROM 通过 MBC **bank 切换**访问。
 
@@ -14,10 +14,10 @@ GB / GBC 卡带 ROM 的读取 / 烧录 / 擦除 / 导出 / 校验。ROM 通过 M
 ## 对应命令（规划）
 
 ```
-cfburn gb rom read   --port COM7 --out dump.gb
-cfburn gb rom write  --port COM7 --rom game.gb [--mbc auto|mbc5|mbc3|mbc1]
-cfburn gb rom erase  --port COM7
-cfburn gb rom verify --port COM7 --ref game.gb
+cfb mbc rom read   --port COM7 --out dump.gb
+cfb mbc rom write  --port COM7 --rom game.gb [--mbc auto|mbc5|mbc3|mbc1]
+cfb mbc rom erase  --port COM7
+cfb mbc rom verify --port COM7 --ref game.gb
 ```
 
 ## 实现状态：🔴 待实现（依赖 MBC 层移植）

@@ -6,11 +6,12 @@ using Core;
 namespace Cli
 {
     /// <summary>
-    /// cfburn 命令行工具。子命令:
-    ///   cfburn detect                       列出串口并识别烧录器
-    ///   cfburn info  --port COM7            连接并读取芯片 ID + 容量
-    ///   cfburn burn  --port COM7 --rom x.gba [--chip-erase] [--no-ppb] [--no-verify]
-    /// 兼容旧用法: cfburn --port COM7 --rom x.gba ...
+    /// cfb 命令行工具。子命令:
+    ///   cfb detect                       列出串口并识别烧录器
+    ///   cfb info  --port COM7            连接并读取芯片 ID + 容量
+    ///   cfb burn  --port COM7 --rom x.gba [--chip-erase] [--no-ppb] [--no-verify]
+    ///   cfb help  [命令]                 显示帮助
+    /// 兼容旧用法: cfb --port COM7 --rom x.gba ...
     /// </summary>
     internal static class Program
     {
@@ -38,13 +39,63 @@ namespace Cli
                 case "burn":
                 case "write":
                     return RunBurn(Slice(args, 1));
+                case "help":
                 case "-h":
                 case "--help":
-                    PrintUsage(); return 0;
+                    return RunHelp(args);
                 default:
-                    // 向后兼容: cfburn --port .. --rom ..
+                    // 向后兼容: cfb --port .. --rom ..
                     if (cmd.StartsWith("--")) return RunBurn(args);
-                    Console.Error.WriteLine("未知命令: " + cmd);
+                    Console.Error.WriteLine("未知命令: " + cmd + "\n");
+                    PrintUsage();
+                    return 2;
+            }
+        }
+
+        // ---- help ----
+
+        private static int RunHelp(string[] args)
+        {
+            // help / -h / --help 后面可带一个具体命令名
+            string topic = args.Length > 1 ? args[1] : null;
+            switch (topic)
+            {
+                case "detect":
+                case "devices":
+                    Console.WriteLine(@"cfb detect — 列出所有串口并识别烧录器
+
+  枚举系统串口, 通过 USB VID/PID (" + CartLink.UsbVid + "/" + CartLink.UsbPid + @") 标出烧录器,
+  并显示每个端口当前是否可打开(占用检测)。无需参数。
+
+  示例: cfb detect");
+                    return 0;
+                case "info":
+                    Console.WriteLine(@"cfb info [--port COMx] — 读取芯片信息
+
+  连接烧录器, 上电后读取 Flash 芯片 ID 与 CFI(容量/写缓冲/扇区)。
+  省略 --port 时自动选择第一个识别到的烧录器。
+
+  示例: cfb info
+        cfb info --port COM7");
+                    return 0;
+                case "burn":
+                case "write":
+                    Console.WriteLine(@"cfb burn --port COMx --rom <file.gba> [选项] — 烧录 GBA ROM
+
+  --port <COMx>     串口 (默认 COM7)
+  --rom  <path>     要烧录的 GBA ROM
+  --log  <path>     日志文件 (默认 cfb_<时间>.log)
+  --chip-erase      整片擦除模式 (默认逐扇区即擦即写)
+  --no-ppb          跳过 PPB 解锁
+  --no-verify       跳过校验+修复
+
+  示例: cfb burn --port COM7 --rom game.gba");
+                    return 0;
+                case null:
+                    PrintUsage();
+                    return 0;
+                default:
+                    Console.Error.WriteLine("没有该命令的帮助: " + topic + "\n");
                     PrintUsage();
                     return 2;
             }
@@ -73,7 +124,7 @@ namespace Cli
                 Console.WriteLine($"未发现烧录器 (期望 USB VID {CartLink.UsbVid} / PID {CartLink.UsbPid})。");
                 return 1;
             }
-            Console.WriteLine($"找到 {burners} 个烧录器。用 `cfburn info --port <COMx>` 读取芯片信息。");
+            Console.WriteLine($"找到 {burners} 个烧录器。用 `cfb info --port <COMx>` 读取芯片信息。");
             return 0;
         }
 
@@ -89,7 +140,7 @@ namespace Cli
                     case "--port": port = Next(args, ref i); break;
                     case "-h":
                     case "--help":
-                        Console.WriteLine("用法: cfburn info [--port COMx]  (省略 --port 时自动选第一个烧录器)");
+                        Console.WriteLine("用法: cfb info [--port COMx]  (省略 --port 时自动选第一个烧录器)");
                         return 0;
                     default:
                         Console.Error.WriteLine("未知参数: " + args[i]); return 2;
@@ -161,13 +212,13 @@ namespace Cli
 
             if (string.IsNullOrEmpty(logPath))
                 logPath = Path.Combine(Environment.CurrentDirectory,
-                    "cfburn_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".log");
+                    "cfb_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".log");
 
             try { _logFile = new StreamWriter(logPath, false) { AutoFlush = true }; }
             catch (Exception e) { Console.Error.WriteLine("无法写日志: " + e.Message); }
 
             byte[] data = File.ReadAllBytes(rom);
-            Line($"==== cfburn burn ====");
+            Line($"==== cfb burn ====");
             Line($"端口={port}  ROM={rom}  大小={data.Length:N0} 字节");
             Line($"选项: chipErase={chipErase} unlockPPB={ppb} verify={verify}");
             Line($"日志: {logPath}");
@@ -248,21 +299,25 @@ namespace Cli
 
         private static void PrintUsage()
         {
-            Console.WriteLine(@"用法: cfburn <命令> [选项]
+            Console.WriteLine(@"cfb — 碳酸丐烧录器命令行工具
+
+用法: cfb <命令> [选项]
 
 命令:
   detect                       列出所有串口并标出烧录器
   info  [--port COMx]          连接并读取芯片 ID + 容量 (省略 --port 自动选烧录器)
   burn  --port COMx --rom <f>  烧录 GBA ROM
+  help  [命令]                 显示帮助 (如 `cfb help burn` 看 burn 详细选项)
 
 burn 选项:
   --port <COMx>     串口 (默认 COM7)
   --rom  <path>     要烧录的 GBA ROM
-  --log  <path>     日志文件 (默认 cfburn_<时间>.log)
+  --log  <path>     日志文件 (默认 cfb_<时间>.log)
   --chip-erase      整片擦除模式 (默认逐扇区即擦即写)
   --no-ppb          跳过 PPB 解锁
   --no-verify       跳过校验+修复
-  -h, --help        显示帮助");
+
+用 `cfb help <命令>` 查看单个命令的详细帮助。");
         }
     }
 }
