@@ -1,13 +1,22 @@
 # chis-burner-cmd
 
-碳酸丐烧录器（ChisFlashBurner）的**命令行版**，从 WinForms 上位机里精简而来。
+碳酸丐烧录器的**命令行版**，从原 WinForms 上位机里精简而来。
 只保留协议/烧录引擎与 CLI，去掉了图形界面。
 
-## 组成
+## 目录结构
 
-- **`ChisFlashBurner.Core`** — 协议 + 烧录引擎（带超时 + 自动重连复活的健壮实现）。
-  详见 [ChisFlashBurner.Core/README.md](ChisFlashBurner.Core/README.md)。
-- **`ChisFlashBurner.Cli`** — 控制台前端，编译输出 `cfburn.exe`。
+```
+chis-burner-cmd/
+├─ src/
+│  ├─ Core/          协议 + 烧录引擎（类库，输出 Core.dll）
+│  │  ├─ CartLink.cs     串口协议层（带超时 + 自动重连）
+│  │  ├─ GbaFlasher.cs   高层烧录操作
+│  │  └─ README.md       引擎说明
+│  └─ Cli/           控制台前端，编译输出 cfburn.exe
+│     └─ Program.cs
+├─ chis-burner-cmd.sln
+└─ README.md
+```
 
 目标框架：.NET Framework **4.8**。无 NuGet 依赖，仅引用框架自带程序集。
 
@@ -16,10 +25,11 @@
 无 WinForms / resx，可直接用 SDK 工具链：
 
 ```powershell
-dotnet build ChisFlashBurner.Cli.sln -c Release
+dotnet build chis-burner-cmd.sln -c Release
+# 输出: src/Cli/bin/Release/net48/cfburn.exe
 ```
 
-或用 Visual Studio / 完整版 MSBuild 打开 `ChisFlashBurner.Cli.sln` 构建。
+或用 Visual Studio / 完整版 MSBuild 打开 `chis-burner-cmd.sln` 构建。
 
 ## 用法
 

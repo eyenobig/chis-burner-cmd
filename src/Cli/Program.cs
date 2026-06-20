@@ -1,9 +1,9 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using ChisFlashBurner.Core;
+using Core;
 
-namespace ChisFlashBurner.Cli
+namespace Cli
 {
     /// <summary>
     /// 命令行烧录工具：写入 GBA ROM + 校验 + 记录日志。
@@ -58,7 +58,7 @@ namespace ChisFlashBurner.Cli
             catch (Exception e) { Console.Error.WriteLine("无法写日志: " + e.Message); }
 
             byte[] data = File.ReadAllBytes(rom);
-            Line($"==== ChisFlashBurner CLI ====");
+            Line($"==== cfburn ====");
             Line($"端口={port}  ROM={rom}  大小={data.Length:N0} 字节");
             Line($"选项: chipErase={chipErase} unlockPPB={ppb} verify={verify}");
             Line($"日志: {logPath}");

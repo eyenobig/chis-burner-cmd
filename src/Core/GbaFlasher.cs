@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 
-namespace ChisFlashBurner.Core
+namespace Core
 {
     /// <summary>NOR flash 信息（CFI）。</summary>
     public sealed class FlashInfo

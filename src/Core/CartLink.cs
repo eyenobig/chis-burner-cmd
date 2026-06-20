@@ -3,11 +3,11 @@ using System.Diagnostics;
 using System.IO.Ports;
 using System.Threading;
 
-namespace ChisFlashBurner.Core
+namespace Core
 {
     /// <summary>
     /// 碳酸丐烧录器的串口协议层（USB CDC，VID 0483 / PID 0721）。
-    /// 复刻 ChisFlashBurner 上位机的命令格式，但所有应答读取都带超时，
+    /// 复刻原上位机的命令格式，但所有应答读取都带超时，
     /// 并提供 Reconnect() 在 MCU 卡死（持续编程后不再应答）时关/重开串口复活设备。
     /// </summary>
     public sealed class CartLink : IDisposable

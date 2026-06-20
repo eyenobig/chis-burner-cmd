@@ -4,13 +4,13 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net48</TargetFramework>
     <AssemblyName>cfburn</AssemblyName>
-    <RootNamespace>ChisFlashBurner.Cli</RootNamespace>
+    <RootNamespace>Cli</RootNamespace>
     <LangVersion>8.0</LangVersion>
     <Deterministic>false</Deterministic>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\ChisFlashBurner.Core\ChisFlashBurner.Core.csproj" />
+    <ProjectReference Include="..\Core\Core.csproj" />
   </ItemGroup>
 
 </Project>

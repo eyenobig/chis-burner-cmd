@@ -1,7 +1,7 @@
-# ChisFlashBurner.Core
+# Core
 
 碳酸丐烧录器的**协议 + 烧录引擎**，从上位机里抽出来的独立 DLL（.NET Framework 4.8）。
-WinForms 上位机和将来的命令行(cmd)工具都可以引用它。
+由 `Cli`（cfburn 命令行工具）引用；与具体前端（曾经的 WinForms 上位机）无关。
 
 ## 为什么独立成 DLL
 
@@ -46,15 +46,10 @@ var result = flasher.Burn(rom, rom.Length, new BurnOptions {
 Console.WriteLine(result.Success ? "OK" : $"停在 0x{result.FirstBadAddress:X8}");
 ```
 
-## 做成 cmd 工具
+## 在 cmd 工具中调用
 
-新建一个控制台项目引用本 DLL 即可，例如：
-
-```
-dotnet new console -o ChisFlashBurner.Cli   # 或 net48 控制台
-dotnet add ChisFlashBurner.Cli reference ChisFlashBurner.Core
-# Program.cs 里解析参数后调用 GbaFlasher.Burn(...)
-```
+控制台前端见同级的 `../Cli`（编译输出 `cfburn.exe`）：解析参数后调用
+`GbaFlasher.Burn(...)` 即可。用法见仓库根 [README.md](../../README.md)。
 
 ## 已知硬件现象（实测 S29GL256 / 32MB）
 
