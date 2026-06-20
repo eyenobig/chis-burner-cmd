@@ -21,15 +21,13 @@ chis-burner-cmd/
 
 ## 功能模块
 
-详见 [src/features/README.md](src/features/README.md)。
+详见 [src/features/README.md](src/features/README.md)。ROM/RAM 操作按平台归入各自卡带模块。
 
-| # | 功能 | 状态 |
-|---|------|------|
-| 1 | [识别烧录器](src/features/device_detect/README.md) | ✅ 已实现 |
-| 2 | [GBA 卡带 读/烧/擦 ROM](src/features/gba_cartridge/README.md) | 🟡 部分 |
-| 3 | [GB/GBC 卡带 读/烧/擦 ROM](src/features/gb_cartridge/README.md) | 🔴 待移植 |
-| 4 | [ROM 通用操作 写/导出/校验](src/features/rom_ops/README.md) | 🟡 部分 |
-| 5 | [存档 RAM 写/导出/校验](src/features/ram_ops/README.md) | 🔴 待实现 |
+| # | 功能 | 子模块 | 状态 |
+|---|------|--------|------|
+| 1 | [识别烧录器](src/features/device_detect/README.md) | — | ✅ 已实现 |
+| 2 | [GBA 卡带](src/features/gba_cartridge/README.md) | [rom](src/features/gba_cartridge/rom/README.md) / [ram](src/features/gba_cartridge/ram/README.md) | 🟡 / 🔴 |
+| 3 | [GB/GBC 卡带](src/features/gb_cartridge/README.md) | [rom](src/features/gb_cartridge/rom/README.md) / [ram](src/features/gb_cartridge/ram/README.md) | 🔴 / 🔴 |
 
 目标框架：.NET Framework **4.8**。无 NuGet 依赖，仅引用框架自带程序集。
 
