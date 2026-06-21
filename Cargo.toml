@@ -1,0 +1,22 @@
+[package]
+name = "cfb"
+version = "0.1.0"
+edition = "2021"
+description = "碳酸丐烧录器命令行 (Rust 版) —— GBA/GB ROM 烧录，跨平台 Win/macOS/Linux"
+license = "MIT"
+
+[[bin]]
+name = "cfb"
+path = "src/main.rs"
+
+[dependencies]
+# 跨平台串口 + USB VID/PID 枚举（Windows/macOS/Linux 统一 API）
+serialport = "4"
+# NDJSON 事件输出（给 Electron/Tauri 客户端解析）
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

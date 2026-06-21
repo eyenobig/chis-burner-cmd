@@ -1,0 +1,70 @@
+//! GBA · 删：擦除 flash（整片 / 逐扇区 / PPB 解锁）。
+//!
+//! 从参考源 `GbaFlasher.cs` 的 `EraseChip` / `EraseSector` / `UnlockAllPpb` 复刻。
+//! ⚠️ 未经硬件测试（见根目录 TODO.md）。
+
+use std::time::{Duration, Instant};
+
+use crate::cartridge_link::CartridgeLink;
+
+/// 全片擦除并等待完成（轮询读到 0xFFFF）。
+pub fn erase_chip(link: &mut CartridgeLink, timeout_secs: u64) -> bool {
+    if !link.rom_erase_chip() {
+        return false;
+    }
+    let start = Instant::now();
+    let mut probe = [0u8; 2];
+    loop {
+        if link.rom_read(0, &mut probe) && probe == [0xff, 0xff] {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        if start.elapsed().as_secs() > timeout_secs {
+            return false;
+        }
+    }
+}
+
+/// 扇区擦除（byte_base 须扇区对齐）。失败自动重连重试。
+pub fn erase_sector(link: &mut CartridgeLink, byte_base: u32, retries: u32) -> bool {
+    let mut probe = [0u8; 2];
+    for _ in 0..retries {
+        link.rom_write(0x555, &[0xaa, 0x00]);
+        link.rom_write(0x2aa, &[0x55, 0x00]);
+        link.rom_write(0x555, &[0x80, 0x00]);
+        link.rom_write(0x555, &[0xaa, 0x00]);
+        link.rom_write(0x2aa, &[0x55, 0x00]);
+        link.rom_write(byte_base >> 1, &[0x30, 0x00]);
+
+        let start = Instant::now();
+        loop {
+            if link.rom_read(byte_base, &mut probe) && probe == [0xff, 0xff] {
+                return true;
+            }
+            if start.elapsed().as_secs() > 6 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = link.reconnect();
+    }
+    false
+}
+
+/// All PPB Erase：清除全部扇区的持久保护位（上半区写不进时多半因 PPB）。
+pub fn unlock_all_ppb(link: &mut CartridgeLink) {
+    // 退出任何命令集
+    link.rom_write(0, &[0x90, 0x00]);
+    link.rom_write(0, &[0x00, 0x00]);
+    link.rom_write(0, &[0xf0, 0x00]);
+    // 进入非易失扇区保护命令集并 All PPB Erase
+    link.rom_write(0x555, &[0xaa, 0x00]);
+    link.rom_write(0x2aa, &[0x55, 0x00]);
+    link.rom_write(0x555, &[0xc0, 0x00]);
+    link.rom_write(0, &[0x80, 0x00]);
+    link.rom_write(0, &[0x30, 0x00]); // All PPB Erase
+    std::thread::sleep(Duration::from_millis(2000));
+    link.rom_write(0, &[0x90, 0x00]);
+    link.rom_write(0, &[0x00, 0x00]);
+    link.rom_write(0, &[0xf0, 0x00]);
+}

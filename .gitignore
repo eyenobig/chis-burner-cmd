@@ -1,12 +1,23 @@
-# Build output
-build/
-bin/
-obj/
+# Rust build output
+/target/
+**/*.rs.bk
 
-# Visual Studio
-.vs/
+# ROM / save dumps produced by `cfb dump` (don't commit cartridge contents)
+*.gba
+*.gb
+*.gbc
+*.sav
+*.srm
 
 # Logs / archives
 *.log
 *.zip
 *.7z
+
+# IDE / editor / OS
+.vs/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
