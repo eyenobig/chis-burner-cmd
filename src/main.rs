@@ -25,7 +25,7 @@ use std::process::ExitCode;
 use event::{emit, Event};
 
 /// 取值型选项名（解析 positional 时跳过它们的值）。
-const VALUE_OPTS: &[&str] = &["--lang", "--port", "--rom", "--out", "--len"];
+const VALUE_OPTS: &[&str] = &["--lang", "--port", "--rom", "--out", "--len", "--file"];
 
 fn opt_value(args: &[String], name: &str) -> Option<String> {
     args.iter()
@@ -77,8 +77,13 @@ fn main() -> ExitCode {
     match cmd {
         "detect" | "devices" => device::cmd_detect(json),
         "select" => device::cmd_select(json, port, clear),
+        "disconnect" => device::cmd_disconnect(json, port),
         "voltage" => device::cmd_voltage(json, pos.get(1).map(|s| s.to_string()), clear),
         "info" => rom::cmd_info(json, port),
+        "rom-info" => match opt_value(&args, "--file") {
+            Some(f) => rom::cmd_rom_info(json, &f),
+            None => arg_required(json, "rom-info", "op.no_rom"),
+        },
         "burn" | "write" => match opt_value(&args, "--rom") {
             Some(f) => rom::cmd_burn(
                 json,
@@ -92,6 +97,7 @@ fn main() -> ExitCode {
             None => arg_required(json, "burn", "op.no_rom"),
         },
         "erase" => rom::cmd_erase(json, port, mbc),
+        "rtc" => rom::cmd_rtc_read(json, port, mbc),
         "dump" => match opt_value(&args, "--out") {
             Some(f) => {
                 let len = opt_value(&args, "--len").and_then(|s| s.parse::<u64>().ok());

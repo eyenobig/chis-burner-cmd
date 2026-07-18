@@ -7,6 +7,7 @@
   "op.no_rom": "Specify the ROM to burn with --rom <file>.",
   "op.no_out": "Specify the output path with --out <file>.",
   "dump.fail": "Dump failed: {err}",
+  "disconnect.ok": "Disconnected (cartridge powered off, remembered port cleared).",
   "voltage.auto": "Voltage: auto (by cartridge: GBA=3.3V, MBC=5V)",
   "voltage.saved": "Remembered voltage: {v}",
   "voltage.invalid": "Invalid voltage '{v}' (use 3v3 / 5v / off / auto).",

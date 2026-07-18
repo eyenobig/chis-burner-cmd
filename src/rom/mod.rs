@@ -156,6 +156,71 @@ fn print_human(port: &str, kind: CartridgeKind, flash: &FlashInfo, game: Option<
     }
 }
 
+/// `cfb rom-info --file <path>` —— 离线解析本地 ROM 文件头，不需要烧录器。
+pub fn cmd_rom_info(json: bool, path: &str) -> ExitCode {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            if json {
+                emit(&Event::Error { command: "rom-info".to_string(), message: e.to_string() });
+            } else {
+                eprintln!("{e}");
+            }
+            return ExitCode::from(1);
+        }
+    };
+
+    // 判别 GBA（头部至少 0xC0 字节，且通过 GBA 头校验）vs GB/GBC
+    if bytes.len() >= 0xC0 && gba::ops::is_gba_header(&bytes) {
+        let h = gba::ops::parse_header(&bytes);
+        if json {
+            emit(&Event::Info {
+                port: String::new(),
+                present: true,
+                kind: "gba".to_string(),
+                id: String::new(),
+                capacity_bytes: bytes.len() as u64,
+                buffer_write_bytes: 0,
+                sector_size: 0,
+                sector_count: 0,
+                game_name: Some(h.game_name),
+                rom_title: Some(h.rom_title),
+                game_code: Some(h.game_code),
+                revision: Some(h.revision),
+                rom_checksum: Some(h.checksum),
+                rtc: Some(h.rtc),
+            });
+        }
+    } else if bytes.len() >= 0x150 {
+        let h = mbc::ops::read::parse_header(&bytes);
+        if json {
+            emit(&Event::Info {
+                port: String::new(),
+                present: true,
+                kind: "gb_mbc".to_string(),
+                id: String::new(),
+                capacity_bytes: h.rom_size_bytes,
+                buffer_write_bytes: 0,
+                sector_size: 0,
+                sector_count: 0,
+                game_name: Some(h.title.clone()),
+                rom_title: Some(h.title),
+                game_code: None,
+                revision: None,
+                rom_checksum: Some(h.header_checksum),
+                rtc: Some(h.rtc),
+            });
+        }
+    } else {
+        if json {
+            emit(&Event::Error { command: "rom-info".to_string(), message: "file too small or unrecognized format".to_string() });
+        }
+        return ExitCode::from(1);
+    }
+
+    ExitCode::SUCCESS
+}
+
 // ==================== 写 / 删 / 导 命令 ====================
 
 /// 打开端口并按卡型上电（GBA=3.3V / MBC=5V，受 `voltage` 偏好覆盖）。GBA 额外 warm_up。
@@ -271,6 +336,74 @@ pub fn cmd_burn(
     };
     device::power_off(&mut link);
     finish(json, "burn", res.success, res.bytes_written, res.mismatch_bytes, res.seconds)
+}
+
+/// `cfb rtc [--mbc]` —— 读取卡带 RTC 时间。
+pub fn cmd_rtc_read(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
+    let Some(mut link) = open_powered(json, "rtc", port, mbc) else {
+        return ExitCode::from(3);
+    };
+
+    if mbc {
+        match mbc::ops::rtc::read_mbc3_rtc(&mut link) {
+            Some(t) => {
+                device::power_off(&mut link);
+                if json {
+                    emit(&Event::RtcData {
+                        ok: true,
+                        kind: "mbc3".to_string(),
+                        year: None, month: None, date: None, day_of_week: None,
+                        hour: Some(t.hour),
+                        minute: Some(t.minute),
+                        second: Some(t.second),
+                        day_count: Some(t.day_count),
+                        halted: Some(t.halted),
+                        overflow: Some(t.overflow),
+                    });
+                } else {
+                    println!("RTC (MBC3): 第{}天 {:02}:{:02}:{:02}{}{}",
+                        t.day_count, t.hour, t.minute, t.second,
+                        if t.halted { " [停止]" } else { "" },
+                        if t.overflow { " [溢出]" } else { "" });
+                }
+                ExitCode::SUCCESS
+            }
+            None => {
+                device::power_off(&mut link);
+                op_err(json, "rtc", "RTC 读取失败");
+                ExitCode::from(3)
+            }
+        }
+    } else {
+        match gba::ops::rtc::read_s3511(&mut link) {
+            Some(t) => {
+                device::power_off(&mut link);
+                if json {
+                    emit(&Event::RtcData {
+                        ok: true,
+                        kind: "gba".to_string(),
+                        year: Some(t.year),
+                        month: Some(t.month),
+                        date: Some(t.date),
+                        day_of_week: Some(t.day_of_week),
+                        hour: Some(t.hour),
+                        minute: Some(t.minute),
+                        second: Some(t.second),
+                        day_count: None, halted: None, overflow: None,
+                    });
+                } else {
+                    println!("RTC (GBA/S3511): {:04}-{:02}-{:02} {:02}:{:02}:{:02} 星期{}",
+                        t.year, t.month, t.date, t.hour, t.minute, t.second, t.day_of_week);
+                }
+                ExitCode::SUCCESS
+            }
+            None => {
+                device::power_off(&mut link);
+                op_err(json, "rtc", "RTC 读取失败（无 GPIO 功能？）");
+                ExitCode::from(3)
+            }
+        }
+    }
 }
 
 /// `cfb erase [--mbc]` —— 清空 ROM（整片擦除）。

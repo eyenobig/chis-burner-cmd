@@ -40,6 +40,30 @@ pub fn power_off(link: &mut CartridgeLink) {
     link.power(Voltage::Off.code());
 }
 
+/// `cfb disconnect` —— 断开连接：忘记记住的端口 + 尽力给卡带断电（幂等，无设备也成功）。
+pub fn cmd_disconnect(json: bool, explicit: Option<String>) -> ExitCode {
+    config::clear_selected(); // 忘记 select 记住的端口
+    let target = explicit.or_else(first_burner);
+    if let Some(p) = target {
+        let mut link = CartridgeLink::new(&p);
+        if link.open().is_ok() {
+            power_off(&mut link);
+        }
+    }
+    if json {
+        emit(&Event::Result {
+            command: "disconnect".to_string(),
+            ok: true,
+            bytes: 0,
+            mismatch_bytes: 0,
+            seconds: 0.0,
+        });
+    } else {
+        println!("{}", i18n::t("disconnect.ok"));
+    }
+    ExitCode::SUCCESS
+}
+
 /// `cfb voltage [3v3|5v|off|auto] [--clear]` —— 记住/查看供电电压偏好。
 pub fn cmd_voltage(json: bool, arg: Option<String>, clear: bool) -> ExitCode {
     // 清除 / auto：回到按卡型自动决定。

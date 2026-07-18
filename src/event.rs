@@ -85,6 +85,26 @@ pub enum Event {
 
     /// voltage：当前/设置的供电电压（"3.3V"/"5V"/"off"/"auto"）。
     Voltage { voltage: String },
+
+    /// rtc read：从卡带读到的 RTC 时间。
+    RtcData {
+        ok: bool,
+        /// "gba"（S3511 GPIO bit-bang）或 "mbc3"（内存映射寄存器）。
+        kind: String,
+        // GBA S3511 字段（BCD 已转十进制）
+        year: Option<u16>,
+        month: Option<u8>,
+        date: Option<u8>,
+        day_of_week: Option<u8>,
+        // 公共字段
+        hour: Option<u8>,
+        minute: Option<u8>,
+        second: Option<u8>,
+        // MBC3 专用
+        day_count: Option<u16>,
+        halted: Option<bool>,
+        overflow: Option<bool>,
+    },
 }
 
 /// 输出一行 NDJSON。

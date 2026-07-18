@@ -7,6 +7,7 @@
   "op.no_rom": "请用 --rom <文件> 指定要烧录的 ROM。",
   "op.no_out": "请用 --out <文件> 指定导出路径。",
   "dump.fail": "导出失败: {err}",
+  "disconnect.ok": "已断开连接（卡带断电、清除记住的端口）。",
   "voltage.auto": "电压: 自动（按卡型：GBA=3.3V，MBC=5V）",
   "voltage.saved": "已记住电压: {v}",
   "voltage.invalid": "无效电压 '{v}'（用 3v3 / 5v / off / auto）。",
