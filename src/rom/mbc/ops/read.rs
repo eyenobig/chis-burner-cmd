@@ -6,20 +6,40 @@
 
 use crate::cartridge_link::CartridgeLink;
 use crate::event::RomChecksum;
-use crate::rom::mbc::data::{mbc_name, MbcHeader};
+use crate::rom::mbc::data::{mbc_name, MbcHeader, MbcKind};
 
 /// 16KB bank。线性 ROM 偏移 → bank 号。
 pub const BANK_SIZE: u32 = 0x4000;
 
-/// MBC5 选 ROM bank：先写 bit8(0x3000) 再写低 8 位(0x2000)。
-pub fn switch_bank(link: &mut CartridgeLink, bank: u32) {
-    link.gbc_write(0x3000, &[((bank >> 8) & 0xff) as u8]);
-    link.gbc_write(0x2000, &[(bank & 0xff) as u8]);
+/// 选 ROM bank（按 MBC 代次分发，复刻 C# `mbc_romSwitchBank`）。
+/// - MBC3：只写 0x2000，bank 0 重映射为 1（MBC3 规范：bank 0 只在固定区 0x0000-0x3FFF）。
+/// - MBC5：先写 bit8 到 0x3000，再写低 8 位到 0x2000（9 位，0-511）。
+pub fn switch_bank(link: &mut CartridgeLink, bank: u32, kind: MbcKind) {
+    match kind {
+        MbcKind::Mbc3 => {
+            let mut b = (bank & 0xff) as u8;
+            if b == 0 {
+                b = 1;
+            }
+            link.gbc_write(0x2000, &[b]);
+        }
+        MbcKind::Mbc5 => {
+            link.gbc_write(0x3000, &[((bank >> 8) & 0xff) as u8]);
+            link.gbc_write(0x2000, &[(bank & 0xff) as u8]);
+        }
+    }
 }
 
-/// 线性 ROM 偏移 → GB 总线地址（MBC5：恒 0x4000 + 低 14 位）。
-pub fn bus_addr(rom_off: u32) -> u32 {
-    0x4000 + (rom_off & 0x3fff)
+/// 线性 ROM 偏移 → GB 总线地址（按 MBC 代次分发，复刻 C# `mbc_BaseAddressOfBank`）。
+/// - MBC3：bank 0 → 0x0000-0x3FFF（固定区）；其余 → 0x4000-0x7FFF。
+/// - MBC5：恒 0x4000 + 低 14 位（MBC5 bank 0 不可经 0x4000 选中）。
+pub fn bus_addr(rom_off: u32, kind: MbcKind) -> u32 {
+    let bank = rom_off >> 14;
+    let base = match kind {
+        MbcKind::Mbc3 if bank == 0 => 0x0000,
+        _ => 0x4000,
+    };
+    base + (rom_off & 0x3fff)
 }
 
 /// CFI 查询，返回 (device_size_bytes, buffer_write_bytes)。
@@ -40,6 +60,18 @@ pub fn rom_get_size(link: &mut CartridgeLink) -> (u64, u16) {
 
     link.gbc_write(0x00, &[0xf0]); // reset
     (device_size, buffer_write_bytes)
+}
+
+/// 从卡带读 1 字节，自带 1 次重试以应对上电后第一条命令被 MCU 吞掉。
+/// addr 落在 bank 0 固定区（0x0000-0x3FFF）时无需 switch_bank。
+pub fn read_cart_byte(link: &mut CartridgeLink, addr: u32) -> Option<u8> {
+    let mut b = [0u8; 1];
+    for _ in 0..2 {
+        if link.gbc_read(addr, &mut b) {
+            return Some(b[0]);
+        }
+    }
+    None
 }
 
 /// GB 头校验：stored=rom[0x14D]，computed = (Σ_{a=0x134..=0x14C} (-rom[a]-1)) & 0xFF。

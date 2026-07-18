@@ -249,6 +249,8 @@ fn open_powered(json: bool, cmd: &str, port: Option<String>, mbc: bool) -> Optio
     device::power(&mut link, device::voltage_for(kind));
     if !mbc {
         link.warm_up();
+    } else {
+        link.gbc_warm_up(); // MBC：GB 总线版，吸收上电首包 + flash 复位
     }
     Some(link)
 }
@@ -329,7 +331,7 @@ pub fn cmd_burn(
     let mut log = |m: &str| log_emit(json, m);
 
     let res = if mbc {
-        mbc::ops::write::burn(&mut link, &data, &mut progress, &mut log)
+        mbc::ops::write::burn(&mut link, &data, verify, &mut progress, &mut log)
     } else {
         let opt = BurnOptions { chip_erase, unlock_ppb, verify };
         gba::ops::write::burn(&mut link, &data, &opt, &mut progress, &mut log)
@@ -425,15 +427,20 @@ pub fn cmd_dump(json: bool, port: Option<String>, out_path: &str, mbc: bool, len
     let Some(mut link) = open_powered(json, "dump", port, mbc) else {
         return ExitCode::from(3);
     };
-    let len = match len_opt {
-        Some(l) => l,
-        None => {
-            if mbc {
-                mbc::ops::read::rom_get_size(&mut link).0
-            } else {
-                gba::ops::read::read_info(&mut link).device_size
-            }
-        }
+    // MBC：读卡带头识别代次（kind），缺省长度优先用头 0x148（游戏 ROM 大小），无效则回落 CFI。
+    let (kind, len) = if mbc {
+        let ct = mbc::ops::read::read_cart_byte(&mut link, 0x147).unwrap_or(0xFF);
+        let k = mbc::data::MbcKind::from_cartridge_type(ct);
+        let default_len = match mbc::ops::read::read_cart_byte(&mut link, 0x148) {
+            Some(code) if code <= 8 => 32 * 1024u64 << code,
+            _ => mbc::ops::read::rom_get_size(&mut link).0,
+        };
+        (k, len_opt.unwrap_or(default_len))
+    } else {
+        (
+            mbc::data::MbcKind::Mbc5,
+            len_opt.unwrap_or_else(|| gba::ops::read::read_info(&mut link).device_size),
+        )
     };
     if len == 0 {
         device::power_off(&mut link);
@@ -444,7 +451,7 @@ pub fn cmd_dump(json: bool, port: Option<String>, out_path: &str, mbc: bool, len
     let mut last_mb = u64::MAX;
     let mut progress = |d: u64, t: u64| progress_emit(json, d, t, &mut last_mb);
     let r = if mbc {
-        mbc::ops::export::dump(&mut link, len, out_path, &mut progress)
+        mbc::ops::export::dump(&mut link, kind, len, out_path, &mut progress)
     } else {
         gba::ops::export::dump(&mut link, len, out_path, &mut progress)
     };

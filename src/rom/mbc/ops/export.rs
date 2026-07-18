@@ -10,12 +10,14 @@ use std::io::Write;
 
 use super::read::{bus_addr, switch_bank};
 use crate::cartridge_link::CartridgeLink;
+use crate::rom::mbc::data::MbcKind;
 
 const PACKET: usize = 4096;
 
 /// 导出 `len` 字节 GB/GBC ROM 到 `path`。调用前应已上电（5V 视卡而定）。
 pub fn dump(
     link: &mut CartridgeLink,
+    kind: MbcKind,
     len: u64,
     path: &str,
     progress: &mut dyn FnMut(u64, u64),
@@ -30,13 +32,13 @@ pub fn dump(
         let bank = (rom_off >> 14) as i64;
         if bank != current_bank {
             current_bank = bank;
-            switch_bank(link, bank as u32);
+            switch_bank(link, bank as u32, kind);
         }
-        let cartridge_addr = bus_addr(rom_off);
+        let cartridge_addr = bus_addr(rom_off, kind);
         let b = &mut buf[..n];
         if !link.gbc_read(cartridge_addr, b) {
             let _ = link.reconnect();
-            switch_bank(link, bank as u32);
+            switch_bank(link, bank as u32, kind);
             current_bank = bank;
             continue;
         }

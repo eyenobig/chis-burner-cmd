@@ -16,6 +16,32 @@ pub struct MbcHeader {
     pub rtc: bool,
 }
 
+/// MBC 控制器代次：决定 bank 切换寄存器序列与 bank 0 总线地址映射。
+/// flash 命令序列（unlock/erase/program/CFI）两代完全相同，只有这两处不同。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MbcKind {
+    Mbc3,
+    Mbc5,
+}
+
+impl MbcKind {
+    /// 由 ROM 头 cartridge_type(0x147) 推断 MBC 代次。
+    /// 0x0F..=0x13 = MBC3（含 MBC3+RTC）；其余（含 0x19..=0x1E MBC5 及未知）按 MBC5 处理。
+    pub fn from_cartridge_type(cartridge_type: u8) -> Self {
+        match cartridge_type {
+            0x0F..=0x13 => MbcKind::Mbc3,
+            _ => MbcKind::Mbc5,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            MbcKind::Mbc3 => "MBC3",
+            MbcKind::Mbc5 => "MBC5",
+        }
+    }
+}
+
 /// maptype：cartridge type(0x147) → MBC 名称（GB 独有）。
 pub fn mbc_name(cartridge_type: u8) -> &'static str {
     match cartridge_type {

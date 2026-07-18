@@ -117,6 +117,18 @@ impl CartridgeLink {
         self.response_timeout = save;
     }
 
+    /// GB 总线版 warm_up：吸收上电/复位后被 MCU 吞掉的第一条命令，并把 flash 复位回读阵列。
+    /// MBC 模式 open_powered 后用（C# `mbc5_romGetSize`/`mbc5_romGetID` 末尾都是 gbc_write(0x00, 0xf0)）。
+    pub fn gbc_warm_up(&mut self) {
+        let save = self.response_timeout;
+        self.response_timeout = Duration::from_millis(700);
+        for _ in 0..2 {
+            self.gbc_write(0x00, &[0xf0]); // reset to read array
+            self.discard_all();
+        }
+        self.response_timeout = save;
+    }
+
     // ---------------- 低层收发 ----------------
 
     fn send_package(&mut self, payload: &[u8]) -> std::io::Result<()> {
