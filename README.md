@@ -80,6 +80,12 @@ VID/PID，无需像 C# 版那样按平台分别走 WMI/ioreg//sys。注意 `dete
 WinForms/.NET Fx 4.8，只读参考）复刻而来。源文件 → Rust 落点映射、移植做法见技能
 [.claude/skills/cfb-port-source/SKILL.md](.claude/skills/cfb-port-source/SKILL.md)。
 
+## CI / 构建
+
+GitHub Actions 在 Win/macOS/Linux 跨平台编译并产出 **Tauri sidecar** 命名的 `cfb` 二进制。
+**双重门禁触发**：只有打 `v*` 标签、且标签在 `master` 上才构建；流程与产物命名见
+[docs/ci.md](docs/ci.md)。
+
 ## 设备驱动说明
 
 烧录器是 STM32 的 **USB CDC（虚拟串口）**，Windows/macOS/Linux 都用**系统自带驱动**，无需安装。

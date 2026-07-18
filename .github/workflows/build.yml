@@ -1,0 +1,121 @@
+name: build
+
+# 只在打 v* 标签时触发；普通 push / PR 一律不构建。
+# 额外要求：tag 必须落在固定分支 RELEASE_BRANCH（默认 master）上，否则 gate 作业拦下。
+# （tag 触发用的是被 tag 那次提交里的 workflow 文件，所以本文件要先合到 master。）
+on:
+  push:
+    tags: ['v*']
+
+# 同一 ref 的新推送取消旧的在跑构建，省 Actions 额度。
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+# Release 需要 contents: write；GITHUB_TOKEN 自动提供，无需配 secret。
+permissions:
+  contents: write
+
+jobs:
+  # 门禁 1：校验 tag 指向的提交在固定分支上。不通过 → 整条流水线不跑（省掉 4 目标的无效构建）。
+  gate:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_BRANCH: master   # 固定分支，想改成别的在这里改
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require tag on ${{ env.RELEASE_BRANCH }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$RELEASE_BRANCH"
+          if git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "OK: tag '$GITHUB_REF_NAME' (commit $GITHUB_SHA) is on '$RELEASE_BRANCH'."
+          else
+            echo "::error::Tag '$GITHUB_REF_NAME' 不在 '$RELEASE_BRANCH' 分支上，已拒绝构建。请把 master 快进到该提交，或在 master 上重新打 tag。"
+            exit 1
+          fi
+
+  build:
+    name: build · ${{ matrix.target }}
+    needs: gate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 每个目标在匹配的原生 OS runner 上构建（非交叉编译），命名遵循 Tauri sidecar 约定
+        # cfb-<rust-triple>[.exe]，可直接丢进 beggar_chis/src-tauri/binaries/。
+        # 想精简平台：直接删掉 matrix 里不要的条目即可。
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            bin: cfb.exe
+            artifact: cfb-x86_64-pc-windows-msvc.exe
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            bin: cfb
+            artifact: cfb-x86_64-unknown-linux-gnu
+          - target: x86_64-apple-darwin
+            os: macos-13
+            bin: cfb
+            artifact: cfb-x86_64-apple-darwin
+          - target: aarch64-apple-darwin
+            os: macos-14
+            bin: cfb
+            artifact: cfb-aarch64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # serialport 在 Linux 依赖 libudev（macOS/Windows 走系统原生 API，无需额外包）。
+      - name: Install Linux deps (libudev)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build (release)
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # 启动冒烟：能跑 help 说明链接/启动正常（不碰串口硬件）。
+      - name: Smoke test (cfb help)
+        run: target/${{ matrix.target }}/release/${{ matrix.bin }} help
+
+      # 重命名为 Tauri sidecar 名：cfb-<triple>[.exe]
+      - name: Rename to sidecar name
+        run: cp target/${{ matrix.target }}/release/${{ matrix.bin }} ${{ matrix.artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  # 门禁 2(隐含)：release 只在 tag 触发时跑。tag 已被 gate 校验为在 master 上。
+  release:
+    name: release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten sidecar binaries
+        run: |
+          mkdir -p release
+          find artifacts -type f -name 'cfb-*' -exec cp {} release/ \;
+          ls -l release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

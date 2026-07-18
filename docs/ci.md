@@ -1,0 +1,73 @@
+# CI / 构建（GitHub Actions）
+
+仓库用一条 GitHub Actions 工作流 [.github/workflows/build.yml](../.github/workflows/build.yml) 在三个平台上跨平台编译 `cfb`，并产出 **Tauri sidecar 命名**的二进制，可直接丢进 [beggar_chis](../../beggar_chis)/`src-tauri/binaries/`。
+
+## 触发条件（双重门禁）
+
+构建**只在同时满足两个条件**时才会跑：
+
+| 门禁 | 位置 | 含义 |
+|------|------|------|
+| **门禁 A：必须有 tag** | 触发器 `on.push.tags: ['v*']` | 只在推送 `v*` 标签时触发。普通 push、PR、其它分支一律不构建。 |
+| **门禁 B：tag 必须在 master 上** | `gate` 作业 | 用 `git merge-base --is-ancestor` 校验 tag 指向的提交是 `master` 的祖先；不在 master 上直接拦下，连构建都不跑。 |
+
+> 固定分支由 `gate` 作业里的 `env: RELEASE_BRANCH`（默认 `master`）一处控制，想换分支改这里即可。
+
+## 构建矩阵
+
+每个目标在匹配的**原生 OS runner** 上构建（非交叉编译，避开工具链坑）：
+
+| 目标 triple | runner | 产物名（sidecar） |
+|------|------|------|
+| `x86_64-pc-windows-msvc` | windows-latest | `cfb-x86_64-pc-windows-msvc.exe` |
+| `x86_64-unknown-linux-gnu` | ubuntu-latest | `cfb-x86_64-unknown-linux-gnu` |
+| `x86_64-apple-darwin` | macos-13 | `cfb-x86_64-apple-darwin` |
+| `aarch64-apple-darwin` | macos-14 | `cfb-aarch64-apple-darwin` |
+
+> Linux 额外装 `libudev-dev`（`serialport` 依赖）；macOS/Windows 走系统原生 API，无需额外包。
+> 精简平台：删掉 matrix `include` 里不要的条目即可。
+
+流水线：`gate → build ×4 → release`。每个目标会跑一次 `cfb help` 做启动冒烟（不碰串口硬件），通过后重命名为 sidecar 名上传。`release` 把 4 个二进制打成 GitHub Release 资产（按 tag 号发版，附自动更新说明）。
+
+## 完整发版流程（git-flow）
+
+> tag 触发用的是**被 tag 那次提交里的 workflow 文件**，所以必须先把本文件合到 master，再在 master 上打 tag——顺序不能反。
+
+```bash
+cd z:/Project/chis-burner-cmd
+
+# ① 在 dev 上改代码 / workflow
+git checkout dev
+git add -A
+git commit -m "<中文一句话>"
+git push origin dev
+
+# ② 合 dev → master（只接受快进）并推
+git checkout master
+git merge --ff-only dev
+git push origin master
+
+# ③ 在 master 上打 tag 并推 tag —— 这一步才触发构建
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+## 拿到产物
+
+- **稳定下载 URL**（给 beggar_chis 用最方便）：
+  `https://github.com/eyenobig/chis-burner-cmd/releases/download/v0.1.0/cfb-x86_64-pc-windows-msvc.exe`
+  （换 triple / 换 tag 号即对应其它平台/版本）
+- 或 GitHub **Releases** 页手动下载，或 Actions 运行页 **Artifacts** 区按目标下载 zip。
+
+放进 [beggar_chis](../../beggar_chis)/`src-tauri/binaries/`，按当前构建目标挑文件名（Tauri 打包时按 triple 自动选）。
+
+## 不需要配 secret
+
+Release 用自动 `GITHUB_TOKEN`，`permissions: contents: write` 已写在 workflow 里，零额外配置。
+
+## 故障排查
+
+- **Actions 没跑**：`Settings → Actions → General` 确认是 "Allow all actions"；确认 tag 是 `v*` 开头、且 push 了 tag（不是只 push 分支）。
+- **`gate` 红了 "tag 不在 master"**：tag 打在了 dev-only 的提交上。要么先把 master 快进到该提交，要么删掉 tag 在 master 上重打：`git tag -d v0.1.0 && git push origin :refs/tags/v0.1.0`。
+- **想重新发同一版本**：删掉 GitHub 上的 Release，删本地 + 远端 tag，再重打重推。
+- **`cargo build --locked` 失败**：`Cargo.lock` 与 `Cargo.toml` 不一致，本地跑一次 `cargo build` 更新 lock 并提交，再推。
