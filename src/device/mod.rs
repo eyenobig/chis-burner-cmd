@@ -7,7 +7,6 @@ pub mod data;
 pub mod ops;
 
 // 命令入口给 main 用；其余函数/类型在模块内部经 `ops`/`data` 路径直接引用。
-pub use data::Voltage;
 pub use ops::{
     cmd_detect, cmd_disconnect, cmd_select, cmd_voltage, power, power_off, resolve_port,
     voltage_for,

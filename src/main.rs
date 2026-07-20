@@ -4,10 +4,13 @@
 //!     detect [--json]                列出已连接的烧录器
 //!     select [--port P] [--clear]    选择并记住一个烧录器
 //!     voltage [3v3|5v|off|auto]      记住/查看供电电压偏好
-//!     info  [--port P]               读 flash + 卡带/游戏信息
+//!     disconnect                     断开烧录器并清除记住的端口
+//!     info  [--port P] [--mbc]       读 flash + 卡带/游戏信息
+//!     rom-info --file <f>            离线解析 ROM 文件头
 //!     burn  --rom <f> [--mbc] [...]  写入 ROM
 //!     erase [--mbc]                  清空 ROM（整片擦除）
 //!     dump  --out <f> [--mbc] [--len N]  导出 ROM 到文件
+//!     rtc   [--mbc]                  读取卡带 RTC
 //!     help
 //!
 //! 全局：`--lang zh-CN|en`（会被记住）；`--json` 输出 NDJSON 事件流。
@@ -79,7 +82,7 @@ fn main() -> ExitCode {
         "select" => device::cmd_select(json, port, clear),
         "disconnect" => device::cmd_disconnect(json, port),
         "voltage" => device::cmd_voltage(json, pos.get(1).map(|s| s.to_string()), clear),
-        "info" => rom::cmd_info(json, port),
+        "info" => rom::cmd_info(json, port, mbc),
         "rom-info" => match opt_value(&args, "--file") {
             Some(f) => rom::cmd_rom_info(json, &f),
             None => arg_required(json, "rom-info", "op.no_rom"),

@@ -1,8 +1,6 @@
 //! MBC 数据类型（GB/GBC 独有）：ROM 头 + **maptype**（cartridge type → MBC 名称）。
 //!
 //! maptype 是 GB 卡独有的信息：头部 0x147 的 cartridge type 字节决定用哪代 MBC 控制器。
-#![allow(dead_code)] // live 读取待移植 GB 总线协议后接通
-
 use crate::event::RomChecksum;
 
 /// GB/GBC ROM 头解析结果。

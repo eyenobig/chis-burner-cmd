@@ -4,7 +4,7 @@
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CartridgeKind {
     Gba,
-    /// GB/GBC（MBC）——目前只能标注，live 读取待移植 GB 总线协议。
+    /// GB/GBC（MBC）——通过 GB 总线协议读取。
     #[allow(dead_code)]
     GbMbc,
     Unknown,

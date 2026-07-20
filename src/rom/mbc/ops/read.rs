@@ -1,8 +1,6 @@
 //! MBC · 读：GB/GBC 头解析、GB 头校验、RTC。
 //!
-//! **解析就绪，但 live 读取待移植**：读物理 GB 卡需 GB 总线协议（`gbcCart_read` + 分页，
-//! 见参考源 `cart_adapter.cs`），尚未移植进 `cartridge_link`，故暂未接入 `cfb info`。
-#![allow(dead_code)]
+//! 物理卡读取使用 `CartridgeLink::gbc_read`（固件命令 0xfb）。
 
 use crate::cartridge_link::CartridgeLink;
 use crate::event::RomChecksum;
@@ -74,6 +72,18 @@ pub fn read_cart_byte(link: &mut CartridgeLink, addr: u32) -> Option<u8> {
     None
 }
 
+/// 读取并解析物理 GB/GBC 卡的 0x0000..0x014f 头部。
+/// 完整头一次读取，失败后再重试一次，以兼容上电后首包被固件吞掉的情况。
+pub fn read_live_header(link: &mut CartridgeLink) -> Option<MbcHeader> {
+    let mut header = [0u8; 0x150];
+    for _ in 0..2 {
+        if link.gbc_read(0, &mut header) {
+            return Some(parse_header(&header));
+        }
+    }
+    None
+}
+
 /// GB 头校验：stored=rom[0x14D]，computed = (Σ_{a=0x134..=0x14C} (-rom[a]-1)) & 0xFF。
 pub fn header_checksum(rom: &[u8]) -> RomChecksum {
     if rom.len() <= 0x14D {
@@ -104,7 +114,7 @@ pub fn parse_header(rom: &[u8]) -> MbcHeader {
         .to_string();
     let cgb_flag = rom[0x143];
     let cartridge_type = rom[0x147];
-    let rom_size_bytes = 32 * 1024u64 << rom.get(0x148).copied().unwrap_or(0).min(8);
+    let rom_size_bytes = (32 * 1024u64) << rom.get(0x148).copied().unwrap_or(0).min(8);
 
     MbcHeader {
         title,

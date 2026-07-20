@@ -55,7 +55,7 @@ pub enum Event {
         buffer_write_bytes: u32,
         sector_size: u32,
         sector_count: u32,
-        // ---- 游戏 ROM 头（仅当识别到 GBA 游戏时非 null）----
+        // ---- 游戏 ROM 头（识别到 GBA 或 GB/GBC(MBC) 游戏时非 null）----
         game_name: Option<String>,
         rom_title: Option<String>,
         game_code: Option<String>,

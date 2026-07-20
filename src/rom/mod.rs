@@ -15,9 +15,10 @@ use crate::{device, i18n};
 use common::CartridgeKind;
 use gba::data::BurnOptions;
 use gba::{FlashInfo, GbaHeader};
+use mbc::data::MbcHeader;
 
 /// `cfb info` —— 读 flash 芯片 + 卡带/游戏信息（人类可读 / `--json`）。
-pub fn cmd_info(json: bool, port: Option<String>) -> ExitCode {
+pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
     let port = match device::resolve_port(port) {
         Some(p) => p,
         None => {
@@ -40,7 +41,24 @@ pub fn cmd_info(json: bool, port: Option<String>) -> ExitCode {
         return ExitCode::from(3);
     }
 
-    device::power(&mut link, device::Voltage::V3_3); // GBA = 3.3V
+    device::power(&mut link, device::voltage_for(if mbc { CartridgeKind::GbMbc } else { CartridgeKind::Gba }));
+    if mbc {
+        link.gbc_warm_up();
+        let header = mbc::ops::read::read_live_header(&mut link);
+        let (capacity, buffer) = mbc::ops::read::rom_get_size(&mut link);
+        device::power_off(&mut link);
+        let Some(header) = header else {
+            emit_or_eprint(json, &i18n::t("info.err_read"));
+            return ExitCode::from(3);
+        };
+        if json {
+            emit_mbc_info(&port, capacity, buffer, &header);
+        } else {
+            print_mbc_human(Some(&port), capacity, Some(buffer), &header);
+        }
+        return ExitCode::SUCCESS;
+    }
+
     link.warm_up();
     let flash = gba::ops::read_info(&mut link);
     let present = gba::ops::flash_present(&flash);
@@ -73,26 +91,63 @@ pub fn cmd_info(json: bool, port: Option<String>) -> ExitCode {
     };
 
     if json {
-        emit(&Event::Info {
-            port: port.clone(),
-            present,
-            kind: kind.as_str().to_string(),
-            id: flash.id_hex(),
-            capacity_bytes: flash.device_size,
-            buffer_write_bytes: flash.buffer_write_bytes,
-            sector_size: flash.sector_size,
-            sector_count: flash.sector_count,
-            game_name: game.as_ref().map(|g| g.game_name.clone()),
-            rom_title: game.as_ref().map(|g| g.rom_title.clone()),
-            game_code: game.as_ref().map(|g| g.game_code.clone()),
-            revision: game.as_ref().map(|g| g.revision),
-            rom_checksum: game.as_ref().map(|g| g.checksum.clone()),
-            rtc: game.as_ref().map(|g| g.rtc),
-        });
+        emit_gba_info(&port, kind.as_str(), &flash.id_hex(), flash.device_size, flash.buffer_write_bytes, flash.sector_size, flash.sector_count, game.as_ref());
     } else {
         print_human(&port, kind, &flash, game.as_ref());
     }
     ExitCode::SUCCESS
+}
+
+/// 发出一条 GBA 侧 `info` 事件（`cmd_info` 实时读 / `cmd_rom_info` 离线解析共用）。
+/// `kind` 实时读时可能是 `"unknown"`（flash 在位但头部未识别）；离线解析恒 `"gba"`。
+/// `game` 为 `None` 时游戏字段全部为 `null`。
+fn emit_gba_info(
+    port: &str,
+    kind: &str,
+    id: &str,
+    capacity_bytes: u64,
+    buffer_write_bytes: u32,
+    sector_size: u32,
+    sector_count: u32,
+    game: Option<&GbaHeader>,
+) {
+    emit(&Event::Info {
+        port: port.to_string(),
+        present: true,
+        kind: kind.to_string(),
+        id: id.to_string(),
+        capacity_bytes,
+        buffer_write_bytes,
+        sector_size,
+        sector_count,
+        game_name: game.map(|g| g.game_name.clone()),
+        rom_title: game.map(|g| g.rom_title.clone()),
+        game_code: game.map(|g| g.game_code.clone()),
+        revision: game.map(|g| g.revision),
+        rom_checksum: game.map(|g| g.checksum.clone()),
+        rtc: game.map(|g| g.rtc),
+    });
+}
+
+/// 发出一条 `gb_mbc` 类 `info` 事件（`cmd_info` 的 live 读 / `cmd_rom_info` 离线解析共用）。
+/// `capacity`/`buffer` 传 0 表示离线场景（无 flash CFI 数据），回落用头部 `rom_size_bytes`。
+fn emit_mbc_info(port: &str, capacity: u64, buffer: u16, h: &MbcHeader) {
+    emit(&Event::Info {
+        port: port.to_string(),
+        present: true,
+        kind: "gb_mbc".to_string(),
+        id: String::new(),
+        capacity_bytes: if capacity == 0 { h.rom_size_bytes } else { capacity },
+        buffer_write_bytes: buffer as u32,
+        sector_size: 0,
+        sector_count: 0,
+        game_name: Some(h.title.clone()),
+        rom_title: Some(h.title.clone()),
+        game_code: None,
+        revision: None,
+        rom_checksum: Some(h.header_checksum.clone()),
+        rtc: Some(h.rtc),
+    });
 }
 
 fn emit_or_eprint(json: bool, msg: &str) {
@@ -139,20 +194,34 @@ fn print_human(port: &str, kind: CartridgeKind, flash: &FlashInfo, game: Option<
             println!("{}", i18n::tf("info.game_code", &[("code", &g.game_code)]));
             println!("{}", i18n::tf("info.revision", &[("rev", &g.revision.to_string())]));
             println!("{}", i18n::tf("info.rtc", &[("yn", &yn(g.rtc))]));
-            let c = &g.checksum;
-            if c.ok {
-                println!("{}", i18n::tf("info.checksum_ok", &[("stored", &format!("{:02X}", c.stored))]));
-            } else {
-                println!(
-                    "{}",
-                    i18n::tf(
-                        "info.checksum_bad",
-                        &[("stored", &format!("{:02X}", c.stored)), ("computed", &format!("{:02X}", c.computed))]
-                    )
-                );
-            }
+            print_checksum(&g.checksum);
         }
         None => println!("{}", i18n::t("info.no_game")),
+    }
+}
+
+fn print_mbc_human(port: Option<&str>, capacity: u64, buffer: Option<u16>, h: &MbcHeader) {
+    if let Some(port) = port {
+        println!("{}", i18n::tf("info.port", &[("port", port)]));
+        println!("{}", i18n::tf("info.cartridge", &[("kind", &i18n::t("kind.gb_mbc"))]));
+    }
+    println!("{}", i18n::tf("info.rom_title", &[("title", &h.title)]));
+    println!("{}", i18n::tf("info.mbc_type", &[("name", h.mbc_name), ("code", &format!("{:02X}", h.cartridge_type))]));
+    println!("{}", i18n::tf("info.cgb", &[("flag", &format!("{:02X}", h.cgb_flag))]));
+    let size = if capacity == 0 { h.rom_size_bytes } else { capacity };
+    println!("{}", i18n::tf("info.capacity", &[("bytes", &size.to_string()), ("mb", &(size / 1024 / 1024).to_string())]));
+    if let Some(n) = buffer {
+        println!("{}", i18n::tf("info.buffer", &[("n", &n.to_string())]));
+    }
+    println!("{}", i18n::tf("info.rtc", &[("yn", &yn(h.rtc))]));
+    print_checksum(&h.header_checksum);
+}
+
+fn print_checksum(c: &crate::event::RomChecksum) {
+    if c.ok {
+        println!("{}", i18n::tf("info.checksum_ok", &[("stored", &format!("{:02X}", c.stored))]));
+    } else {
+        println!("{}", i18n::tf("info.checksum_bad", &[("stored", &format!("{:02X}", c.stored)), ("computed", &format!("{:02X}", c.computed))]));
     }
 }
 
@@ -174,46 +243,31 @@ pub fn cmd_rom_info(json: bool, path: &str) -> ExitCode {
     if bytes.len() >= 0xC0 && gba::ops::is_gba_header(&bytes) {
         let h = gba::ops::parse_header(&bytes);
         if json {
-            emit(&Event::Info {
-                port: String::new(),
-                present: true,
-                kind: "gba".to_string(),
-                id: String::new(),
-                capacity_bytes: bytes.len() as u64,
-                buffer_write_bytes: 0,
-                sector_size: 0,
-                sector_count: 0,
-                game_name: Some(h.game_name),
-                rom_title: Some(h.rom_title),
-                game_code: Some(h.game_code),
-                revision: Some(h.revision),
-                rom_checksum: Some(h.checksum),
-                rtc: Some(h.rtc),
-            });
+            emit_gba_info("", "gba", "", bytes.len() as u64, 0, 0, 0, Some(&h));
+        } else {
+            println!("{}", i18n::tf("rom_info.file", &[("path", path)]));
+            println!("{}", i18n::tf("info.cartridge", &[("kind", &i18n::t("kind.gba"))]));
+            println!("{}", i18n::tf("info.rom_title", &[("title", &h.rom_title)]));
+            println!("{}", i18n::tf("info.game_code", &[("code", &h.game_code)]));
+            println!("{}", i18n::tf("info.revision", &[("rev", &h.revision.to_string())]));
+            println!("{}", i18n::tf("info.capacity", &[("bytes", &bytes.len().to_string()), ("mb", &(bytes.len() / 1024 / 1024).to_string())]));
+            println!("{}", i18n::tf("info.rtc", &[("yn", &yn(h.rtc))]));
+            print_checksum(&h.checksum);
         }
     } else if bytes.len() >= 0x150 {
         let h = mbc::ops::read::parse_header(&bytes);
         if json {
-            emit(&Event::Info {
-                port: String::new(),
-                present: true,
-                kind: "gb_mbc".to_string(),
-                id: String::new(),
-                capacity_bytes: h.rom_size_bytes,
-                buffer_write_bytes: 0,
-                sector_size: 0,
-                sector_count: 0,
-                game_name: Some(h.title.clone()),
-                rom_title: Some(h.title),
-                game_code: None,
-                revision: None,
-                rom_checksum: Some(h.header_checksum),
-                rtc: Some(h.rtc),
-            });
+            emit_mbc_info("", 0, 0, &h);
+        } else {
+            println!("{}", i18n::tf("rom_info.file", &[("path", path)]));
+            println!("{}", i18n::tf("info.cartridge", &[("kind", &i18n::t("kind.gb_mbc"))]));
+            print_mbc_human(None, h.rom_size_bytes, None, &h);
         }
     } else {
         if json {
             emit(&Event::Error { command: "rom-info".to_string(), message: "file too small or unrecognized format".to_string() });
+        } else {
+            eprintln!("{}", i18n::t("rom_info.unrecognized"));
         }
         return ExitCode::from(1);
     }
@@ -432,7 +486,7 @@ pub fn cmd_dump(json: bool, port: Option<String>, out_path: &str, mbc: bool, len
         let ct = mbc::ops::read::read_cart_byte(&mut link, 0x147).unwrap_or(0xFF);
         let k = mbc::data::MbcKind::from_cartridge_type(ct);
         let default_len = match mbc::ops::read::read_cart_byte(&mut link, 0x148) {
-            Some(code) if code <= 8 => 32 * 1024u64 << code,
+            Some(code) if code <= 8 => (32 * 1024u64) << code,
             _ => mbc::ops::read::rom_get_size(&mut link).0,
         };
         (k, len_opt.unwrap_or(default_len))
@@ -514,5 +568,26 @@ mod tests {
         assert_eq!(mbc::data::mbc_name(0x13), "MBC3");
         assert_eq!(mbc::data::mbc_name(0x1B), "MBC5");
         assert_eq!(mbc::data::mbc_name(0x00), "ROM ONLY");
+    }
+
+    #[test]
+    fn parses_mbc3_header_and_checksum() {
+        let mut rom = [0u8; 0x150];
+        rom[0x134..0x13b].copy_from_slice(b"POKEMON");
+        rom[0x143] = 0x80;
+        rom[0x147] = 0x10;
+        rom[0x148] = 0x05;
+        let mut checksum = 0u8;
+        for &byte in &rom[0x134..=0x14c] {
+            checksum = checksum.wrapping_sub(byte).wrapping_sub(1);
+        }
+        rom[0x14d] = checksum;
+
+        let h = mbc::ops::read::parse_header(&rom);
+        assert_eq!(h.title, "POKEMON");
+        assert_eq!(h.mbc_name, "MBC3");
+        assert_eq!(h.rom_size_bytes, 1024 * 1024);
+        assert!(h.rtc);
+        assert!(h.header_checksum.ok);
     }
 }

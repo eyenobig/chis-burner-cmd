@@ -31,7 +31,7 @@ cfb 的每个子命令有**两套输出**，必须并行维护：
 | `summary` | 命令结束的汇总（detect 只统计烧录器） | `command` `burners` |
 | `selected` | select：记住的端口；`port=null` 表示已清除 | `port`(string\|null) |
 | `error` | 未实现/未知命令/设备异常/select 需 --port | `command` `message` |
-| `info` | info：flash 芯片 + 卡带/游戏信息 | `port` `present`(bool) `kind`("gba"/"gb_mbc"/"unknown") `id` `capacity_bytes`(u64) `buffer_write_bytes` `sector_size` `sector_count` `game_name?` `rom_title?` `game_code?` `revision?` `rom_checksum?`{`stored`,`computed`,`ok`} `rtc?`(bool)。游戏字段仅识别到 GBA 游戏时非 null |
+| `info` | info：flash 芯片 + 卡带/游戏信息 | `port` `present`(bool) `kind`("gba"/"gb_mbc"/"unknown") `id` `capacity_bytes`(u64) `buffer_write_bytes` `sector_size` `sector_count` `game_name?` `rom_title?` `game_code?` `revision?` `rom_checksum?`{`stored`,`computed`,`ok`} `rtc?`(bool)。游戏字段识别到 GBA 或 GB/GBC(MBC) 游戏时非 null；`kind="unknown"` 时（flash 在位但头部未识别）全部为 null。GB/GBC 侧 `id`/`sector_size`/`sector_count` 恒为空/0（无 CFI 概念），`game_code`/`revision` 恒为 null（头部无此字段） |
 | `progress` | burn/dump：进度 | `done` `total`（字节） |
 | `log` | burn：阶段性日志 | `message` |
 | `result` | burn/erase/dump：最终结果 | `command` `ok`(bool) `bytes`(u64) `mismatch_bytes` `seconds` |

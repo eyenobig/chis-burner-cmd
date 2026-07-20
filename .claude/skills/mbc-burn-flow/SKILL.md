@@ -1,6 +1,6 @@
 ---
 name: mbc-burn-flow
-description: cfb 烧录 GB/GBC (MBC) ROM 的端到端流程与 MBC3/MBC5 协议差异。实现或调试 mbc::ops 下的 burn/dump/erase，或排查「bank 写错地址 / 16KB 处卡死 / MBC3 ROM 烧不进」类 bug 时必读。含寻址差异表、verify 规范、配置驱动愿景。
+description: cfb 操作 GB/GBC (MBC) 卡带的端到端流程（burn/dump/erase + `info --mbc` live 读头）与 MBC3/MBC5 协议差异。实现或调试 mbc::ops 下任意函数，或排查「bank 写错地址 / 16KB 处卡死 / MBC3 ROM 烧不进 / info --mbc 读不到头」类 bug 时必读。含寻址差异表、verify 规范、info 事件复用规则、配置驱动愿景。
 ---
 
 # cfb MBC burn 流程
@@ -54,6 +54,22 @@ cfb 曾硬编码 MBC5 协议，烧 MBC3 ROM 在 16KB（bank 1 起点）卡死 12
 ## dump 长度决策
 
 `cmd_dump` MBC 缺省长度优先用 header `0x148`（游戏 ROM 大小，`32KB << code`，code ≤ 8），无效则回落 CFI `rom_get_size`（flash 芯片大小）。`--len N` 显式覆盖最高优先。
+
+## live 读头（`cfb info --mbc`）
+
+`rom::cmd_info` 的 `mbc` 分支（`src/rom/mod.rs`）：
+
+1. `device::power(voltage_for(GbMbc))`（5V）→ `link.gbc_warm_up()` 吸收上电首包。
+2. `mbc::ops::read::read_live_header`：整段 `0x0000..0x150` 一次性 `gbc_read`，失败重试一次（兼容首包被吞），成功后走 `parse_header`（与 `rom-info` 离线解析同一份代码，逻辑必须保持一致）。
+3. `mbc::ops::read::rom_get_size`（CFI）拿 flash 实际容量/buffer_write；**读头失败直接返回错误**，不继续查 flash。
+4. `device::power_off` 收尾（无论成功失败）。
+
+事件/人类输出统一走两个共用函数，**新增调用点或字段时复用它们，不要在别处重新拼 `Event::Info`**：
+
+- `emit_mbc_info(port, capacity, buffer, &header)` / `print_mbc_human(...)`：`cmd_info` 的 live 分支与 `cmd_rom_info` 的离线 MBC 分支共用。`capacity`/`buffer` 传 `0` 即表示离线场景，内部回落用头部 `rom_size_bytes`。
+- `emit_gba_info(port, kind, id, capacity, buffer, sector_size, sector_count, game)`：GBA 侧同构写法，`cmd_info` 实时读与 `cmd_rom_info` 离线解析共用；`kind` 需传参而非硬编码，因为实时读时 flash 在位但头部未识别会是 `"unknown"`。
+
+容量优先级（live `info --mbc` 与 `dump` 一致）：CFI `rom_get_size` 非 0 则用它（flash 真实容量）；为 0（多为离线 `rom-info` 场景，无烧录器可查）才回落头部 `0x148` 算出的 `rom_size_bytes`。
 
 ## 配置驱动愿景（阶段 2，方向）
 
