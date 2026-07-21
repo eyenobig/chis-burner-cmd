@@ -70,7 +70,7 @@ cargo run -- --lang en detect
 {"type":"summary","command":"detect","burners":1}
 ```
 
-格式是稳定契约，定义见 [.claude/skills/cfb-output/SKILL.md](.claude/skills/cfb-output/SKILL.md) 与
+格式是稳定契约，定义见 [docs/client-protocol.md](docs/client-protocol.md) 与
 [src/event.rs](src/event.rs)；新增命令请遵循它，保证客户端稳定解析。
 
 设备识别用 [`serialport`](https://crates.io/crates/serialport) crate，它在三大平台统一提供 USB
@@ -80,8 +80,7 @@ VID/PID，无需像 C# 版那样按平台分别走 WMI/ioreg//sys。注意 `dete
 ## 复刻参考源
 
 协议/烧录逻辑从外部 C# 工程 **`Z:\Project\beggar_socket\client`**（ChisFlashBurner 上位机，
-WinForms/.NET Fx 4.8，只读参考）复刻而来。源文件 → Rust 落点映射、移植做法见技能
-[.claude/skills/cfb-port-source/SKILL.md](.claude/skills/cfb-port-source/SKILL.md)。
+WinForms/.NET Fx 4.8，只读参考）复刻而来。
 
 ## CI / 构建
 

@@ -21,3 +21,13 @@
 *.swp
 .DS_Store
 Thumbs.db
+# Local AI assistant configuration
+.claude/
+.codex/
+.agents/
+.cursor/
+.windsurf/
+.aider*
+AGENTS.md
+CLAUDE.md
+.github/copilot-instructions.md

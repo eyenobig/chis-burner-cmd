@@ -4,7 +4,7 @@
 //! stdout，供 Electron / Tauri 等 JS 客户端逐行 `JSON.parse` 解析展示。
 //! 所有事件都带 `type` 字段做判别。新增命令时**先在此登记事件**，再实现，保持格式稳定。
 //!
-//! 详细契约见仓库 `.claude/skills/cfb-output/SKILL.md`。
+//! 详细契约见仓库 `docs/client-protocol.md`。
 
 use serde::Serialize;
 

@@ -47,7 +47,7 @@ RTC:      有
 ```
 
 游戏字段（`game_name`/`rom_title`/`game_code`/`revision`/`rom_checksum`/`rtc`）**仅识别到 GBA 游戏时非 null**；
-空片或非 GBA 时为 null。事件契约见 [../.claude/skills/cfb-output/SKILL.md](../.claude/skills/cfb-output/SKILL.md)。
+空片或非 GBA 时为 null。事件契约见 [client-protocol.md](client-protocol.md)。
 
 ## 判别与解析逻辑
 
