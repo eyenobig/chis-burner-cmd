@@ -86,6 +86,9 @@ pub enum Event {
     /// voltage：当前/设置的供电电压（"3.3V"/"5V"/"off"/"auto"）。
     Voltage { voltage: String },
 
+    /// version：`cfb version` 报告的版本号（来自 Cargo.toml）。
+    Version { version: String },
+
     /// rtc read：从卡带读到的 RTC 时间。
     RtcData {
         ok: bool,

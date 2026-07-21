@@ -77,6 +77,20 @@ fn main() -> ExitCode {
     let pos = positionals(&args);
     let cmd = pos.first().copied().unwrap_or("");
 
+    // `--version` / `--help` 以 `-` 开头，会被 positionals() 当作 flag 跳过，
+    // 这里在分支匹配前单独处理，保证 `cfb --version` / `cfb --help` 也生效。
+    if has_flag(&args, "--version") {
+        let version = env!("CARGO_PKG_VERSION");
+        if json {
+            emit(&Event::Version {
+                version: version.into(),
+            });
+        } else {
+            println!("cfb {version}");
+        }
+        return ExitCode::SUCCESS;
+    }
+
     match cmd {
         "detect" | "devices" => device::cmd_detect(json),
         "select" => device::cmd_select(json, port, clear),
@@ -110,6 +124,18 @@ fn main() -> ExitCode {
         },
         "" | "help" | "-h" | "--help" => {
             println!("{}", i18n::t("usage"));
+            ExitCode::SUCCESS
+        }
+        "version" => {
+            // 注意：`cfb --version`（flag 形式）在 positionals 之前单独处理，见上方。
+            let version = env!("CARGO_PKG_VERSION");
+            if json {
+                emit(&Event::Version {
+                    version: version.into(),
+                });
+            } else {
+                println!("cfb {version}");
+            }
             ExitCode::SUCCESS
         }
         other => {

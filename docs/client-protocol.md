@@ -23,6 +23,7 @@
 | `log` | Long-operation status | `message` |
 | `result` | Final burn/erase/dump result | `command`, `ok`, `bytes`, `mismatch_bytes`, `seconds` |
 | `voltage` | Current voltage preference | `voltage` |
+| `version` | `cfb version` output | `version` |
 | `rtc_data` | Cartridge RTC data | `ok`, `kind`, date/time fields |
 
 The executable schema is the `Event` enum in [`src/event.rs`](../src/event.rs).

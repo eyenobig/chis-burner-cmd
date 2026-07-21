@@ -18,7 +18,9 @@
 
 ## [Unreleased]
 
-（尚未发布的改动写在这里。）
+### 新增
+
+- **`cfb version` / `--version`**：报告版本号（来自 Cargo.toml）。`--json` 模式输出 NDJSON `version` 事件（`{"type":"version","version":"0.1.0"}`），供桌面客户端读取展示。
 
 ## [v0.1.0] - 2026-07-22
 
