@@ -31,11 +31,23 @@
 > Intel 构建改用官方替代镜像 `macos-15-intel`。若该镜像将来也被弃用，Intel Apple 可改用交叉编译
 > （在 `macos-14` ARM runner 上 `cargo build --target x86_64-apple-darwin`），ARM 端已自带双架构。
 
-流水线：`gate → build ×4 → release`。每个目标会跑一次 `cfb help` 做启动冒烟（不碰串口硬件），通过后重命名为 sidecar 名上传。`release` 把 4 个二进制打成 GitHub Release 资产（按 tag 号发版，附自动更新说明）。
+流水线：`gate → build ×4 → release`。每个目标会跑一次 `cfb help` 做启动冒烟（不碰串口硬件），通过后重命名为 sidecar 名上传。`release` 把 4 个二进制打成 GitHub Release 资产，**正文来自 CHANGELOG.md**（见下节）。
 
 > **容错：** `release` 用 `if: !cancelled()`，单平台 build 偶发失败不阻塞发版——已成功的平台照常发布。
 > 兜底是 flatten 步骤：至少要有一个 `cfb-*` 二进制，否则 release 作业报错退出（不会发空 Release）。
 > 这是给 `beggar_chis` 的「win/mac/linux 至少三主平台」稳定供货的保险。
+
+## CHANGELOG / 版本记录
+
+[CHANGELOG.md](../CHANGELOG.md) 是 **GitHub Release 正文的唯一来源**，纯手写维护（不自动生成）。发版 CI 会按 tag 号从 CHANGELOG 抽取对应段落注入 Release 正文。
+
+约定：
+
+- 标题格式**必须**是 `## [vX.Y.Z] - YYYY-MM-DD`（带方括号版本号、ISO 日期），版本号要和 git tag 完全一致（含 `v` 前缀）。CI 用 `awk` 按 `## [vX.Y.Z]`（或 `## vX.Y.Z`）定位段落，抽到下一个 `## ` 二级标题前为止。
+- 日常改动先记在 `## [Unreleased]` 下，按 `新增` / `变更` / `修复` 分组。
+- 新版本在**最上面**，`## [Unreleased]` 永远是第一条。
+
+**抽不到不阻断发版**：若 CHANGELOG 里没有当前 tag 的段落（漏写 / 格式不符），release 作业会退回 GitHub 自动生成的提交记录作为正文，并在日志里告警——发版本身不会因文案缺失而失败。
 
 ## 完整发版流程（git-flow）
 
@@ -55,7 +67,10 @@ git checkout master
 git merge --ff-only dev
 git push origin master
 
-# ③ 在 master 上打 tag 并推 tag —— 这一步才触发构建
+# ③ 把 CHANGELOG.md 的 `## [Unreleased]` 改成 `## [vX.Y.Z] - YYYY-MM-DD`，
+#    并在文件最上面新开一个空的 `## [Unreleased]`，提交并推到 master。
+#    （Release 正文来自 CHANGELOG 这一段，见上一节。）
+# ④ 在 master 上打 tag 并推 tag —— 这一步才触发构建
 git tag v0.1.0
 git push origin v0.1.0
 ```

@@ -128,7 +128,44 @@ jobs:
             exit 1
           fi
 
-      - name: Create GitHub Release
+      # 取仓库代码，仅为读 CHANGELOG.md（发版正文的唯一来源，见 docs/ci.md）。
+      - uses: actions/checkout@v4
+
+      # 从 CHANGELOG.md 抽取当前 tag（如 v0.1.0）那一节，作为 Release 正文。
+      # 抽不到（漏写/格式不符）不阻断发版——下一步会退回 GitHub 自动生成。
+      - name: Extract changelog for this tag
+        id: changelog
+        continue-on-error: true
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          awk -v tag="$TAG" '
+            /^##[[:space:]]/ {
+              if (in_sec) exit
+              if (index($0, "[" tag "]") || index($0, " " tag " ") || index($0, " " tag "-")) in_sec=1
+              next
+            }
+            in_sec { buf = buf $0 "\n" }
+            END {
+              sub(/^\n+/, "", buf); sub(/\n+$/, "", buf)
+              if (buf != "") { printf "%s", buf > "release-notes.md"; exit 0 } else { exit 1 }
+            }
+          ' CHANGELOG.md
+          echo "found=$(test -s release-notes.md && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      # 正文优先用 CHANGELOG 抽出来的那节；抽不到才退回 GitHub 自动生成（提交记录）。
+      - name: Create GitHub Release (from CHANGELOG)
+        if: steps.changelog.outputs.found == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body_path: release-notes.md
+          generate_release_notes: false
+          fail_on_unmatched_files: false
+
+      - name: Create GitHub Release (auto notes fallback)
+        if: steps.changelog.outputs.found != 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
