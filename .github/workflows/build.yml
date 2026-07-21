@@ -55,7 +55,7 @@ jobs:
             bin: cfb
             artifact: cfb-x86_64-unknown-linux-gnu
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-15-intel      # macos-13（最后的 Intel runner）已于 2025-12 下线，官方替代为 macos-15-intel
             bin: cfb
             artifact: cfb-x86_64-apple-darwin
           - target: aarch64-apple-darwin
@@ -100,22 +100,37 @@ jobs:
   release:
     name: release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    # needs 一个矩阵作业默认「任一失败即整条 skip」。这里用 !cancelled() 放宽：
+    # 只要有作业跑过（非手动取消），就尝试发布**已成功**的平台，单平台偶发失败不阻塞发版。
+    # 下游「至少有一个二进制」由 flatten 步骤的硬校验兜底。
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
+      # 关掉 download 的 fail，允许部分 build 作业没产出 artifact 时继续。
+      # （download-artifact@v4 在「一个 artifact 都没有」时会失败，这里 continue-on-error
+      #   放过它，真正的「空」兜底在 flatten 步骤。）
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           path: artifacts
+          merge-multiple: true
 
       - name: Flatten sidecar binaries
         run: |
+          set -euo pipefail
           mkdir -p release
           find artifacts -type f -name 'cfb-*' -exec cp {} release/ \;
+          echo "── 已就绪的 sidecar："
           ls -l release/
+          # 兜底：至少要有一个二进制可发，否则发空 Release 毫无意义。
+          if [ -z "$(find release -type f -name 'cfb-*')" ]; then
+            echo "::error::没有任何 build 作业产出 cfb 二进制，无法发版。"
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false

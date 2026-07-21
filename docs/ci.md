@@ -21,13 +21,21 @@
 |------|------|------|
 | `x86_64-pc-windows-msvc` | windows-latest | `cfb-x86_64-pc-windows-msvc.exe` |
 | `x86_64-unknown-linux-gnu` | ubuntu-latest | `cfb-x86_64-unknown-linux-gnu` |
-| `x86_64-apple-darwin` | macos-13 | `cfb-x86_64-apple-darwin` |
+| `x86_64-apple-darwin` | macos-15-intel | `cfb-x86_64-apple-darwin` |
 | `aarch64-apple-darwin` | macos-14 | `cfb-aarch64-apple-darwin` |
 
 > Linux 额外装 `libudev-dev`（`serialport` 依赖）；macOS/Windows 走系统原生 API，无需额外包。
 > 精简平台：删掉 matrix `include` 里不要的条目即可。
+>
+> **关于 Intel macOS runner：** GitHub 已于 2025-12 下线 `macos-13`（最后的 Intel 镜像），
+> Intel 构建改用官方替代镜像 `macos-15-intel`。若该镜像将来也被弃用，Intel Apple 可改用交叉编译
+> （在 `macos-14` ARM runner 上 `cargo build --target x86_64-apple-darwin`），ARM 端已自带双架构。
 
 流水线：`gate → build ×4 → release`。每个目标会跑一次 `cfb help` 做启动冒烟（不碰串口硬件），通过后重命名为 sidecar 名上传。`release` 把 4 个二进制打成 GitHub Release 资产（按 tag 号发版，附自动更新说明）。
+
+> **容错：** `release` 用 `if: !cancelled()`，单平台 build 偶发失败不阻塞发版——已成功的平台照常发布。
+> 兜底是 flatten 步骤：至少要有一个 `cfb-*` 二进制，否则 release 作业报错退出（不会发空 Release）。
+> 这是给 `beggar_chis` 的「win/mac/linux 至少三主平台」稳定供货的保险。
 
 ## 完整发版流程（git-flow）
 
