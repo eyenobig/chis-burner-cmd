@@ -23,6 +23,7 @@ mod cartridge_link;
 mod config;
 mod device;
 mod event;
+mod gamedb;
 mod i18n;
 mod profile;
 mod rom;

@@ -63,9 +63,9 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
     let flash = gba::ops::read_info(&mut link);
     let present = gba::ops::flash_present(&flash);
 
-    // flash 在位才有必要读 GBA 总线头做判别/解析。
+    // flash 在位才有必要读 GBA 总线头做判别/解析。读 0x180 是为算 header SHA1 查游戏名。
     let header = if present {
-        let mut h = [0u8; 0xC0];
+        let mut h = [0u8; 0x180];
         if link.rom_read(0, &mut h) {
             Some(h)
         } else {
@@ -247,6 +247,7 @@ pub fn cmd_rom_info(json: bool, path: &str) -> ExitCode {
         } else {
             println!("{}", i18n::tf("rom_info.file", &[("path", path)]));
             println!("{}", i18n::tf("info.cartridge", &[("kind", &i18n::t("kind.gba"))]));
+            println!("{}", i18n::tf("info.game_name", &[("name", &h.game_name)]));
             println!("{}", i18n::tf("info.rom_title", &[("title", &h.rom_title)]));
             println!("{}", i18n::tf("info.game_code", &[("code", &h.game_code)]));
             println!("{}", i18n::tf("info.revision", &[("rev", &h.revision.to_string())]));

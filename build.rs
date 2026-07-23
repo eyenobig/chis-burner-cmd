@@ -46,6 +46,17 @@ fn main() {
         "cargo:warning=profile: 内置 {} 个 profile (子库 + src/profiles)",
         entries.len()
     );
+
+    // ---- 游戏名数据库 db_AGB.json（子库 games/）----
+    println!("cargo:rerun-if-changed=vendor/chis-burner-rule/games");
+    let db_path = Path::new("vendor/chis-burner-rule/games/db_AGB.json");
+    let db_abs = fs::canonicalize(db_path).unwrap_or_else(|_| db_path.to_path_buf());
+    let gamedb_gen = format!(
+        "// 由 build.rs 自动生成，勿手改。\n\
+         pub const GAMEDB_SRC: &str = include_str!(r\"{}\");\n",
+        db_abs.display()
+    );
+    fs::write(Path::new(&out).join("gamedb_gen.rs"), gamedb_gen).unwrap();
 }
 
 /// 递归收集 dir 下所有 *.json，标签为相对 dir 的路径（去 .json）。
