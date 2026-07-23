@@ -70,5 +70,8 @@
   "dev.usb": "USB-Seriellgerät",
   "dev.pci": "PCI-Seriellport",
   "dev.bt": "Bluetooth-Seriell",
-  "dev.unknown": "(unbekanntes Gerät)"
+  "dev.unknown": "(unbekanntes Gerät)",
+  "profile.list_header": "{n} Flash-Profile (eingebaut + ~/.cfb/profiles/ überschreiben)：",
+  "profile.path_hint": "Externes Profil-Verzeichnis: {dir} (flashGBX fc_*.txt oder eigene .json hier ablegen)",
+  "profile.unknown_sub": "Unbekannter profile-Unterbefehl \"{sub}\" (list / path verwenden)."
 }

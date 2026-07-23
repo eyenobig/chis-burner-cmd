@@ -52,9 +52,10 @@ cargo run -- --lang en detect
 | `erase [--mbc]` | 清空 ROM（整片擦除） | ✅ 已验证 |
 | `dump --out <f> [--mbc] [--len N]` | 导出 ROM 到文件 | ✅ 已验证 |
 | `rtc [--mbc]` | 读卡带 RTC（GBA/S3511、MBC3） | ✅ 已验证 |
-| `save-dump --out <f> [--mbc] [--type T] [--len N]` | 导出存档（GBA：SRAM/FLASH/FRAM/免电；MBC：SRAM/FRAM） | ⚠️ 待硬件验证 |
-| `save-write --file <f> [--mbc] [--type T]` | 写入存档（FLASH 先整片擦除；免电擦覆盖扇区后 rom_program） | ⚠️ 待硬件验证 |
-| `save-verify --file <f> [--mbc] [--type T]` | 校验存档（逐字节比对） | ⚠️ 待硬件验证 |
+| `save-dump --out <f> [--mbc] [--type T] [--len N]` | 导出存档（GBA：SRAM/FLASH/FRAM/免电；MBC：SRAM/FRAM） | ✅ 已验证（GBA SRAM） |
+| `save-write --file <f> [--mbc] [--type T]` | 写入存档（FLASH 先整片擦除；免电擦覆盖扇区后 rom_program） | ✅ 已验证（GBA SRAM） |
+| `save-verify --file <f> [--mbc] [--type T]` | 校验存档（逐字节比对） | ✅ 已验证（GBA SRAM） |
+| `profile [list\|path]` | 列出/查看 flash profile（芯片命令序列配置，flashGBX 风格，[文档](docs/profiles.md)） | ✅ 已验证 |
 | `help` | 显示帮助 | ✅ |
 
 **端口选择优先级**：显式 `--port` > `cfb select` 记住的(仍在线) > 自动第一个烧录器。

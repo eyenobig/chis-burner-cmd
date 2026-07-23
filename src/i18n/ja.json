@@ -70,5 +70,8 @@
   "dev.usb": "USB シリアルデバイス",
   "dev.pci": "PCI シリアルポート",
   "dev.bt": "Bluetooth シリアル",
-  "dev.unknown": "(不明デバイス)"
+  "dev.unknown": "(不明デバイス)",
+  "profile.list_header": "flash profile {n} 件（内蔵 + ~/.cfb/profiles/ 上書き）：",
+  "profile.path_hint": "外部 profile ディレクトリ：{dir}（flashGBX の fc_*.txt や自作 .json をここへ）",
+  "profile.unknown_sub": "不明な profile サブコマンド \"{sub}\"（list / path を使用）。"
 }

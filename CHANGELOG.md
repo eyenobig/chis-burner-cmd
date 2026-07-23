@@ -18,6 +18,11 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **flash 芯片 profile 子库**：把 [flashGBX](https://github.com/lesserkuma/FlashGBX)（Lesserkuma，GPL-3.0）的 154 个 flash 芯片定义转换成 cfb profile，作为独立子库 [chis-burner-rule](https://github.com/eyenobig/chis-burner-rule)（git submodule 挂 `vendor/`）。`build.rs` 在编译期把子库 + `src/profiles/` 共 **156 个** profile 编进二进制——无需配置即覆盖 S29GL / MX29 / AM29 / M29W / SST39 / 28F / insideGadgets 系等常见 GBA/GB 可写卡带。CI 加 `submodules: true`。
+- **flashGBX 风格 flash profile**：把烧录流程里硬编码的 flash 命令序列（reset/read_id/read_cfi/sector_erase/chip_erase）外部化为 JSON，按 Autoselect ID 前 4 字节匹配芯片。内置 S29GL（GBA，含 Macronix+Spansion ID）与 MBC 默认两套；外部 `~/.cfb/profiles/*.json` 可覆盖/补充，格式兼容 flashGBX 的 `fc_*.txt`（可直接拷来用）。`cfb profile list/path` 子命令管理与诊断。**未命中走原硬编码，零回归。** 详见 [docs/profiles.md](docs/profiles.md)。
+
 ## [v0.2.0] - 2026-07-23
 
 ### 新增

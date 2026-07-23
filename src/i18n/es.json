@@ -70,5 +70,8 @@
   "dev.usb": "Dispositivo serie USB",
   "dev.pci": "Puerto serie PCI",
   "dev.bt": "Serie Bluetooth",
-  "dev.unknown": "(dispositivo desconocido)"
+  "dev.unknown": "(dispositivo desconocido)",
+  "profile.list_header": "{n} perfil(es) flash (integrado + ~/.cfb/profiles/ sobrescribe)：",
+  "profile.path_hint": "Directorio externo de perfiles: {dir} (deja fc_*.txt de flashGBX o .json aquí)",
+  "profile.unknown_sub": "Subcomando profile desconocido \"{sub}\" (usa list / path)."
 }
