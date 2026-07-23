@@ -1,0 +1,56 @@
+{
+  "name": "MBC 默认 (GB/GBC 复制卡, AMD/JEDEC)",
+  "type": "DMG",
+  "flash_ids": [],
+  "voltage": 5.0,
+  "flash_size": 0,
+  "sector_size": 16384,
+  "sector_size_from_cfi": true,
+  "chip_erase_timeout": 240,
+  "command_set": "AMD",
+  "commands": {
+    "reset": [
+      [ "0x0000", "0xF0" ]
+    ],
+    "read_identifier": [
+      [ "0x0AAA", "0xAA" ],
+      [ "0x0555", "0x55" ],
+      [ "0x0AAA", "0x90" ]
+    ],
+    "read_cfi": [
+      [ "0x00AA", "0x98" ]
+    ],
+    "sector_erase": [
+      [ "0x0AAA", "0xAA" ],
+      [ "0x0555", "0x55" ],
+      [ "0x0AAA", "0x80" ],
+      [ "0x0AAA", "0xAA" ],
+      [ "0x0555", "0x55" ],
+      [ "SA", "0x30" ]
+    ],
+    "sector_erase_wait_for": [
+      [ null, null, null ],
+      [ null, null, null ],
+      [ null, null, null ],
+      [ null, null, null ],
+      [ null, null, null ],
+      [ "SA", "0xFF", "0xFF" ]
+    ],
+    "chip_erase": [
+      [ "0x0AAA", "0xAA" ],
+      [ "0x0555", "0x55" ],
+      [ "0x0AAA", "0x80" ],
+      [ "0x0AAA", "0xAA" ],
+      [ "0x0555", "0x55" ],
+      [ "0x0AAA", "0x10" ]
+    ],
+    "chip_erase_wait_for": [
+      [ null, null, null ],
+      [ null, null, null ],
+      [ null, null, null ],
+      [ null, null, null ],
+      [ null, null, null ],
+      [ "0x0000", "0xFF", "0xFF" ]
+    ]
+  }
+}

@@ -68,3 +68,38 @@ pub fn unlock_all_ppb(link: &mut CartridgeLink) {
     link.rom_write(0, &[0x00, 0x00]);
     link.rom_write(0, &[0xf0, 0x00]);
 }
+
+// ============ profile 驱动的擦除（命中 profile 时走命令序列，否则用上面的硬编码）============
+
+/// profile 命中时用 chip_erase 序列；否则回落 [`erase_chip`]。
+pub fn chip_erase_profile(link: &mut CartridgeLink, p: &crate::profile::Profile, timeout_secs: u64) -> bool {
+    if let Some(seq) = p.chip_erase() {
+        let to = p.chip_erase_timeout.max(timeout_secs);
+        // 命中后跑序列；run_gba 内部已含每条 cmd 的 wait_for 轮询。
+        // 但 chip_erase 的超时需整体兜底，这里包一层：序列失败再重试一次。
+        for _ in 0..3 {
+            if crate::profile::run_gba(link, &seq, 0) {
+                return true;
+            }
+            let _ = link.reconnect();
+        }
+        false
+    } else {
+        erase_chip(link, timeout_secs)
+    }
+}
+
+/// profile 命中时用 sector_erase 序列擦 `byte_base` 扇区；否则回落 [`erase_sector`]。
+pub fn sector_erase_profile(link: &mut CartridgeLink, p: &crate::profile::Profile, byte_base: u32, retries: u32) -> bool {
+    if let Some(seq) = p.sector_erase() {
+        for _ in 0..retries {
+            if crate::profile::run_gba(link, &seq, byte_base) {
+                return true;
+            }
+            let _ = link.reconnect();
+        }
+        false
+    } else {
+        erase_sector(link, byte_base, retries)
+    }
+}

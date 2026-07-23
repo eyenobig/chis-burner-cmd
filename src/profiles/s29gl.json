@@ -1,0 +1,68 @@
+{
+  "name": "S29GL / MX29GL (GBA 默认)",
+  "type": "AGB",
+  "flash_ids": [
+    [ "0xC2", "0x22", "0x28", "0x22" ],
+    [ "0xC2", "0x22", "0x27", "0x22" ],
+    [ "0xC2", "0x22", "0x2A", "0x22" ],
+    [ "0x01", "0x00", "0x7E", "0x22" ],
+    [ "0x01", "0x00", "0x7B", "0x22" ]
+  ],
+  "voltage": 3.3,
+  "flash_size": 0,
+  "sector_size": 131072,
+  "sector_size_from_cfi": true,
+  "chip_erase_timeout": 200,
+  "command_set": "AMD",
+  "commands": {
+    "reset": [
+      [ "0x0000", "0xF0" ]
+    ],
+    "read_identifier": [
+      [ "0x0555", "0xAA" ],
+      [ "0x02AA", "0x55" ],
+      [ "0x0555", "0x90" ]
+    ],
+    "read_cfi": [
+      [ "0x0055", "0x98" ]
+    ],
+    "sector_erase": [
+      [ "0x0555", "0xAA" ],
+      [ "0x02AA", "0x55" ],
+      [ "0x0555", "0x80" ],
+      [ "0x0555", "0xAA" ],
+      [ "0x02AA", "0x55" ],
+      [ "SA", "0x30" ]
+    ],
+    "sector_erase_wait_for": [
+      [ null, null, null ],
+      [ null, null, null ],
+      [ null, null, null ],
+      [ null, null, null ],
+      [ null, null, null ],
+      [ "SA", "0xFFFF", "0xFFFF" ]
+    ],
+    "chip_erase": [
+      [ "0x0555", "0xAA" ],
+      [ "0x02AA", "0x55" ],
+      [ "0x0555", "0x80" ],
+      [ "0x0555", "0xAA" ],
+      [ "0x02AA", "0x55" ],
+      [ "0x0555", "0x10" ]
+    ],
+    "chip_erase_wait_for": [
+      [ null, null, null ],
+      [ null, null, null ],
+      [ null, null, null ],
+      [ null, null, null ],
+      [ null, null, null ],
+      [ "0x0000", "0xFFFF", "0xFFFF" ]
+    ],
+    "single_write": [
+      [ "0x0555", "0xAA" ],
+      [ "0x02AA", "0x55" ],
+      [ "0x0555", "0xA0" ],
+      [ "PA", "PD" ]
+    ]
+  }
+}

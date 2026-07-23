@@ -24,6 +24,8 @@ jobs:
       RELEASE_BRANCH: master   # 固定分支，想改成别的在这里改
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Require tag on ${{ env.RELEASE_BRANCH }}
         run: |
           set -euo pipefail
@@ -65,6 +67,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -130,6 +134,8 @@ jobs:
 
       # 取仓库代码，仅为读 CHANGELOG.md（发版正文的唯一来源，见 docs/ci.md）。
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       # 从 CHANGELOG.md 抽取当前 tag（如 v0.1.0）那一节，作为 Release 正文。
       # 抽不到（漏写/格式不符）不阻断发版——下一步会退回 GitHub 自动生成。

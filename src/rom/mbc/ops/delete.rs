@@ -63,3 +63,27 @@ pub fn erase_range(link: &mut CartridgeLink, kind: MbcKind, from: u64, to: u64) 
     }
     true
 }
+
+/// profile 驱动的 sector erase 区间（命中 profile 走命令序列，否则回落 [`erase_range`]）。
+pub fn erase_range_profile(
+    link: &mut CartridgeLink,
+    kind: MbcKind,
+    p: &crate::profile::Profile,
+    from: u64,
+    to: u64,
+) -> bool {
+    let Some(seq) = p.sector_erase() else {
+        return erase_range(link, kind, from, to);
+    };
+    let mut off = from & !(BANK_SIZE as u64 - 1);
+    while off < to {
+        let bank = (off >> 14) as u32;
+        switch_bank(link, bank, kind);
+        let sa = bus_addr(off as u32, kind);
+        if !crate::profile::run_dmg(link, &seq, sa) {
+            return false;
+        }
+        off += BANK_SIZE as u64;
+    }
+    true
+}

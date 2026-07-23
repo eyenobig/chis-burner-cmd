@@ -1,0 +1,3 @@
+[submodule "vendor/chis-burner-rule"]
+	path = vendor/chis-burner-rule
+	url = https://github.com/eyenobig/chis-burner-rule.git

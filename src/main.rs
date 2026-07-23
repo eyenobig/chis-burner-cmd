@@ -24,6 +24,7 @@ mod config;
 mod device;
 mod event;
 mod i18n;
+mod profile;
 mod rom;
 
 use std::process::ExitCode;
@@ -141,6 +142,7 @@ fn main() -> ExitCode {
             Some(f) => rom::cmd_save_verify(json, port, &f, mbc, opt_value(&args, "--type")),
             None => arg_required(json, "save-verify", "op.no_save"),
         },
+        "profile" => profile::cmd_profile(json, pos.get(1).copied()),
         "" | "help" | "-h" | "--help" => {
             println!("{}", i18n::t("usage"));
             ExitCode::SUCCESS

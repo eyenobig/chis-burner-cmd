@@ -6,9 +6,10 @@
 
 use std::time::Instant;
 
-use super::delete::{erase_chip, erase_sector, unlock_all_ppb};
+use super::delete::{chip_erase_profile, erase_chip, erase_sector, sector_erase_profile, unlock_all_ppb};
 use super::read::read_info;
 use crate::cartridge_link::CartridgeLink;
+use crate::profile;
 use crate::rom::gba::data::{BurnOptions, BurnResult};
 
 pub const SECTOR: u64 = 0x20000; // 128KB
@@ -103,6 +104,15 @@ pub fn burn(
     }
     log(&format!("ID:{} 容量:{} BuffWr:{}", info.id_hex(), info.device_size, buf_wr));
 
+    // 命中 profile 则用其命令序列做擦除（未命中走原硬编码，行为不变）。
+    let prof = info.id.and_then(|id| {
+        let all = profile::load_all();
+        profile::match_by_id(&all, &id).map(|p| p.clone())
+    });
+    if let Some(p) = &prof {
+        log(&format!("Profile: {} ({})", p.name, p.kind_label()));
+    }
+
     if opt.unlock_ppb {
         log("解锁 PPB (All PPB Erase) ...");
         unlock_all_ppb(link);
@@ -110,7 +120,11 @@ pub fn burn(
 
     if opt.chip_erase {
         log("整片擦除 ...");
-        if !erase_chip(link, 200) {
+        let ok = match &prof {
+            Some(p) => chip_erase_profile(link, p, 200),
+            None => erase_chip(link, 200),
+        };
+        if !ok {
             res.first_bad = Some(0);
         } else if let Some(fail) = program_flow(link, rom, 0, length, buf_wr, &mut res, length, progress) {
             res.first_bad = Some(fail);
@@ -119,7 +133,11 @@ pub fn burn(
         let mut b = 0u64;
         while b < length {
             let end = (b + SECTOR).min(length);
-            if !erase_sector(link, b as u32, 5) {
+            let ok = match &prof {
+                Some(p) => sector_erase_profile(link, p, b as u32, 5),
+                None => erase_sector(link, b as u32, 5),
+            };
+            if !ok {
                 log(&format!("扇区 0x{b:08X} 擦除失败"));
                 res.first_bad = Some(b);
                 break;
@@ -141,7 +159,11 @@ pub fn burn(
                 break;
             }
             for bsec in bad {
-                if erase_sector(link, bsec as u32, 5) {
+                let ok = match &prof {
+                    Some(p) => sector_erase_profile(link, p, bsec as u32, 5),
+                    None => erase_sector(link, bsec as u32, 5),
+                };
+                if ok {
                     let end = (bsec + SECTOR).min(length);
                     program_flow(link, rom, bsec, end, buf_wr, &mut res, length, progress);
                 } else {
