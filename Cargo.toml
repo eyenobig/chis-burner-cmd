@@ -1,6 +1,6 @@
 [package]
 name = "cfb"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "碳酸丐烧录器命令行 (Rust 版) —— GBA/GB ROM 烧录，跨平台 Win/macOS/Linux"
 license = "MIT"

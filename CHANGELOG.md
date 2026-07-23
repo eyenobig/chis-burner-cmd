@@ -18,9 +18,13 @@
 
 ## [Unreleased]
 
+## [v0.2.0] - 2026-07-23
+
 ### 新增
 
-- **`cfb version` / `--version`**：报告版本号（来自 Cargo.toml）。`--json` 模式输出 NDJSON `version` 事件（`{"type":"version","version":"0.1.0"}`），供桌面客户端读取展示。
+- **八国语言**：语言包从 zh-CN / en 扩充为 **zh-CN / en / ja / ko / fr / de / es / pt-BR** 八套（完整 72 键）。`i18n.rs` 改为表驱动（`LANGS`），加语言只需放一个 json 并登记一项；`--lang` 与系统 locale 支持简写/前缀归一化（`zh`→zh-CN、`pt`→pt-BR、`ja_JP`→ja 等），命中不了回退中文。
+- **存档操作**：`cfb save-dump` / `save-write` / `save-verify` 三个子命令，覆盖 GBA 存档 RAM（SRAM/FLASH/FRAM）、GBA 免电存档（batteryless，靠 `<3 from Maniac` 魔数定位）、MBC 存档 RAM（SRAM/FRAM）。协议原语 `0xf7/0xf8/0xf9/0xe7/0xe8/0xea/0xeb` 从 C# `cart_adapter.cs` 移植到 `cartridge_link`；操作逻辑复刻 `mission_gba.cs` / `mission_mbc5.cs`。`--type` 选存档类型（默认 sram），`--len` 指定 dump 字节数。新增 NDJSON `save_info` 事件。⚠️ 待硬件验证。
+- **`cfb version` / `--version`**：报告版本号（来自 Cargo.toml）。`--json` 模式输出 NDJSON `version` 事件（`{"type":"version","version":"0.2.0"}`），供桌面客户端读取展示。
 
 ## [v0.1.0] - 2026-07-22
 
