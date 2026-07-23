@@ -11,6 +11,9 @@
 //!     erase [--mbc]                  清空 ROM（整片擦除）
 //!     dump  --out <f> [--mbc] [--len N]  导出 ROM 到文件
 //!     rtc   [--mbc]                  读取卡带 RTC
+//!     save-dump   --out <f> [--mbc] [--type sram|flash|fram|batteryless] [--len N]  导出存档
+//!     save-write  --file <f> [--mbc] [--type ...]  写入存档
+//!     save-verify --file <f> [--mbc] [--type ...]  校验存档
 //!     help
 //!
 //! 全局：`--lang zh-CN|en`（会被记住）；`--json` 输出 NDJSON 事件流。
@@ -28,7 +31,7 @@ use std::process::ExitCode;
 use event::{emit, Event};
 
 /// 取值型选项名（解析 positional 时跳过它们的值）。
-const VALUE_OPTS: &[&str] = &["--lang", "--port", "--rom", "--out", "--len", "--file"];
+const VALUE_OPTS: &[&str] = &["--lang", "--port", "--rom", "--out", "--len", "--file", "--type"];
 
 fn opt_value(args: &[String], name: &str) -> Option<String> {
     args.iter()
@@ -121,6 +124,22 @@ fn main() -> ExitCode {
                 rom::cmd_dump(json, port, &f, mbc, len)
             }
             None => arg_required(json, "dump", "op.no_out"),
+        },
+        "save-dump" => match opt_value(&args, "--out") {
+            Some(f) => {
+                let typ = opt_value(&args, "--type");
+                let len = opt_value(&args, "--len").and_then(|s| s.parse::<u64>().ok());
+                rom::cmd_save_dump(json, port, &f, mbc, typ, len)
+            }
+            None => arg_required(json, "save-dump", "op.no_out"),
+        },
+        "save-write" => match opt_value(&args, "--file") {
+            Some(f) => rom::cmd_save_write(json, port, &f, mbc, opt_value(&args, "--type")),
+            None => arg_required(json, "save-write", "op.no_save"),
+        },
+        "save-verify" => match opt_value(&args, "--file") {
+            Some(f) => rom::cmd_save_verify(json, port, &f, mbc, opt_value(&args, "--type")),
+            None => arg_required(json, "save-verify", "op.no_save"),
         },
         "" | "help" | "-h" | "--help" => {
             println!("{}", i18n::t("usage"));

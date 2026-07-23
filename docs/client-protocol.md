@@ -25,6 +25,7 @@
 | `voltage` | Current voltage preference | `voltage` |
 | `version` | `cfb version` output | `version` |
 | `rtc_data` | Cartridge RTC data | `ok`, `kind`, date/time fields |
+| `save_info` | Located save (save-dump/write/verify) | `save_type`, `offset`, `size` |
 
 The executable schema is the `Event` enum in [`src/event.rs`](../src/event.rs).
 

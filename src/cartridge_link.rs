@@ -294,6 +294,100 @@ impl CartridgeLink {
         }
         self.read_ack()
     }
+
+    // ---------------- 存档 RAM（GBA 侧 0xE0000000 区）----------------
+    // 复刻自 `cart_adapter.cs` 的 ram_*：地址均为 GBA 字节地址。
+
+    /// SRAM 写（cmd 0xf7）。addr 为 GBA 字节地址。
+    pub fn ram_write(&mut self, addr: u32, data: &[u8]) -> bool {
+        let mut pl = vec![0u8; 5 + data.len()];
+        pl[0] = 0xf7;
+        pl[1..5].copy_from_slice(&addr4(addr));
+        pl[5..].copy_from_slice(data);
+        if self.send_package(&pl).is_err() {
+            return false;
+        }
+        self.read_ack()
+    }
+
+    /// SRAM 读（cmd 0xf8）。addr 为 GBA 字节地址。
+    pub fn ram_read(&mut self, addr: u32, out: &mut [u8]) -> bool {
+        let mut pl = [0u8; 7];
+        pl[0] = 0xf8;
+        pl[1..5].copy_from_slice(&addr4(addr));
+        pl[5] = (out.len() & 0xff) as u8;
+        pl[6] = ((out.len() >> 8) & 0xff) as u8;
+        if self.send_package(&pl).is_err() {
+            return false;
+        }
+        self.read_data_bytes(out)
+    }
+
+    /// FLASH 存档编程（cmd 0xf9）。addr 为 GBA 字节地址。
+    pub fn ram_flash_program(&mut self, addr: u32, data: &[u8]) -> bool {
+        let mut pl = vec![0u8; 5 + data.len()];
+        pl[0] = 0xf9;
+        pl[1..5].copy_from_slice(&addr4(addr));
+        pl[5..].copy_from_slice(data);
+        if self.send_package(&pl).is_err() {
+            return false;
+        }
+        self.read_ack()
+    }
+
+    /// FRAM 存档写（cmd 0xe7）。布局：cmd + addr4 + latency + data（latency 在数据前）。
+    pub fn ram_write_fram(&mut self, addr: u32, data: &[u8], latency: u8) -> bool {
+        let mut pl = vec![0u8; 6 + data.len()];
+        pl[0] = 0xe7;
+        pl[1..5].copy_from_slice(&addr4(addr));
+        pl[5] = latency;
+        pl[6..].copy_from_slice(data);
+        if self.send_package(&pl).is_err() {
+            return false;
+        }
+        self.read_ack()
+    }
+
+    /// FRAM 存档读（cmd 0xe8）。布局：cmd + addr4 + len2 + latency（latency 在末尾）。
+    pub fn ram_read_fram(&mut self, addr: u32, out: &mut [u8], latency: u8) -> bool {
+        let mut pl = [0u8; 8];
+        pl[0] = 0xe8;
+        pl[1..5].copy_from_slice(&addr4(addr));
+        pl[5] = (out.len() & 0xff) as u8;
+        pl[6] = ((out.len() >> 8) & 0xff) as u8;
+        pl[7] = latency;
+        if self.send_package(&pl).is_err() {
+            return false;
+        }
+        self.read_data_bytes(out)
+    }
+
+    /// GB 总线 FRAM 存档写（cmd 0xea）。latency 在数据前（GBA FRAM 用 25，MBC FRAM 用 10）。
+    pub fn gbc_write_fram(&mut self, addr: u32, data: &[u8], latency: u8) -> bool {
+        let mut pl = vec![0u8; 6 + data.len()];
+        pl[0] = 0xea;
+        pl[1..5].copy_from_slice(&addr4(addr));
+        pl[5] = latency;
+        pl[6..].copy_from_slice(data);
+        if self.send_package(&pl).is_err() {
+            return false;
+        }
+        self.read_ack()
+    }
+
+    /// GB 总线 FRAM 存档读（cmd 0xeb）。latency 在末尾。
+    pub fn gbc_read_fram(&mut self, addr: u32, out: &mut [u8], latency: u8) -> bool {
+        let mut pl = [0u8; 8];
+        pl[0] = 0xeb;
+        pl[1..5].copy_from_slice(&addr4(addr));
+        pl[5] = (out.len() & 0xff) as u8;
+        pl[6] = ((out.len() >> 8) & 0xff) as u8;
+        pl[7] = latency;
+        if self.send_package(&pl).is_err() {
+            return false;
+        }
+        self.read_data_bytes(out)
+    }
 }
 
 impl Drop for CartridgeLink {

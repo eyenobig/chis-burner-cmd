@@ -5,6 +5,7 @@ pub mod delete;
 pub mod export;
 pub mod read;
 pub mod rtc;
+pub mod save;
 pub mod write;
 
 // 读侧函数对外用 `gba::ops::read_info` 等扁平路径访问。

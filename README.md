@@ -18,7 +18,7 @@ chis-burner-cmd/
 │  ├─ event.rs       NDJSON 事件定义
 │  ├─ config.rs      select 选择的持久化（~/.cfb.json）
 │  ├─ i18n.rs        语言包加载
-│  └─ i18n/          zh-CN.json / en.json
+│  └─ i18n/          zh-CN / en / ja / ko / fr / de / es / pt-BR 八套
 ├─ docs/           ← 功能说明文档（read-id.md 等）
 ├─ Cargo.toml
 ├─ driver/         ← 可选 INF：仅 Windows，给设备一个友好名（平台中立目录）
@@ -26,7 +26,7 @@ chis-burner-cmd/
 ```
 
 > 每个平台子模块（device / rom/gba / rom/mbc / rom/common）都按 **`data`(数据集) + `ops`(实现函数)** 拆分。
-> ROM 平台的 `ops/` 再按 **读 / 写 / 删 / 导**（`read`/`write`/`delete`/`export`，均已硬件验证）分文件；MBC 额外有 `rtc`。
+> ROM 平台的 `ops/` 再按 **读 / 写 / 删 / 导**（`read`/`write`/`delete`/`export`，均已硬件验证）分文件；MBC 额外有 `rtc`；GBA 与 MBC 各有一个 `save`（存档 dump/write/verify，待硬件验证）。
 > 电压（3.3V/5V 识别与控制，`Voltage`/`power`/`voltage_for`）归 `device`；底层 `0xa0` 发包在 `cartridge_link`。
 
 ## Rust 版（主线）
@@ -52,13 +52,17 @@ cargo run -- --lang en detect
 | `erase [--mbc]` | 清空 ROM（整片擦除） | ✅ 已验证 |
 | `dump --out <f> [--mbc] [--len N]` | 导出 ROM 到文件 | ✅ 已验证 |
 | `rtc [--mbc]` | 读卡带 RTC（GBA/S3511、MBC3） | ✅ 已验证 |
+| `save-dump --out <f> [--mbc] [--type T] [--len N]` | 导出存档（GBA：SRAM/FLASH/FRAM/免电；MBC：SRAM/FRAM） | ⚠️ 待硬件验证 |
+| `save-write --file <f> [--mbc] [--type T]` | 写入存档（FLASH 先整片擦除；免电擦覆盖扇区后 rom_program） | ⚠️ 待硬件验证 |
+| `save-verify --file <f> [--mbc] [--type T]` | 校验存档（逐字节比对） | ⚠️ 待硬件验证 |
 | `help` | 显示帮助 | ✅ |
 
 **端口选择优先级**：显式 `--port` > `cfb select` 记住的(仍在线) > 自动第一个烧录器。
 多台烧录器时 `cfb select` 列出供选择并记住；`--json` 模式不交互，需 `--port` 指定。
 
-**语言**：`--lang zh-CN|en`，缺省跟随系统、回退中文。文案走语言包 [src/i18n/](src/i18n/)
-（`zh-CN.json` / `en.json`），加语言只需加一个 json。
+**语言**：`--lang zh-CN|en|ja|ko|fr|de|es|pt-BR`，缺省跟随系统、回退中文。文案走语言包 [src/i18n/](src/i18n/)
+（八套 json：`zh-CN` / `en` / `ja` / `ko` / `fr` / `de` / `es` / `pt-BR`），加语言只需加一个 json 并在 `i18n.rs` 的 `LANGS` 登记一项。
+`zh`/`pt`/`ja_JP` 这类简写/locale 也会自动归一化（前缀匹配）。
 
 ### 给 JS 客户端的输出（Electron / Tauri）
 

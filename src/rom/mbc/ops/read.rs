@@ -115,6 +115,7 @@ pub fn parse_header(rom: &[u8]) -> MbcHeader {
     let cgb_flag = rom[0x143];
     let cartridge_type = rom[0x147];
     let rom_size_bytes = (32 * 1024u64) << rom.get(0x148).copied().unwrap_or(0).min(8);
+    let ram_size_bytes = ram_size(rom.get(0x149).copied().unwrap_or(0));
 
     MbcHeader {
         title,
@@ -122,7 +123,22 @@ pub fn parse_header(rom: &[u8]) -> MbcHeader {
         cartridge_type,
         mbc_name: mbc_name(cartridge_type),
         rom_size_bytes,
+        ram_size_bytes,
         header_checksum: header_checksum(rom),
         rtc: has_rtc(cartridge_type),
+    }
+}
+
+/// 头 0x149 RAM size 编码 → 字节数（标准 GB 表）。
+/// 0x00=无 0x01=2K 0x02=8K 0x03=32K 0x04=128K 0x05=64K；其余未知按 0。
+pub fn ram_size(code: u8) -> u64 {
+    match code {
+        0x00 => 0,
+        0x01 => 2 * 1024,
+        0x02 => 8 * 1024,
+        0x03 => 32 * 1024,
+        0x04 => 128 * 1024,
+        0x05 => 64 * 1024,
+        _ => 0,
     }
 }

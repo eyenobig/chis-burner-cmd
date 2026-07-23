@@ -5,4 +5,5 @@ pub mod delete;
 pub mod export;
 pub mod read;
 pub mod rtc;
+pub mod save;
 pub mod write;

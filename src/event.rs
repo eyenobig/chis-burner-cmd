@@ -108,6 +108,16 @@ pub enum Event {
         halted: Option<bool>,
         overflow: Option<bool>,
     },
+
+    /// save-dump/write/verify：定位到的存档信息。
+    /// `offset` 仅免电存档有值（存档藏在 ROM flash 内的绝对偏移）；其余为 null。
+    SaveInfo {
+        /// 存档类型："SRAM" / "FLASH" / "FRAM" / "Batteryless"。
+        save_type: String,
+        offset: Option<u64>,
+        /// 存档字节数。
+        size: u64,
+    },
 }
 
 /// 输出一行 NDJSON。

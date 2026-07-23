@@ -519,6 +519,251 @@ pub fn cmd_dump(json: bool, port: Option<String>, out_path: &str, mbc: bool, len
     }
 }
 
+// ==================== 存档 (save) 命令 ====================
+
+/// 解析 `--type`（默认 SRAM）；非法返回 None（由调用方报错）。
+fn parse_save_type(json: bool, cmd: &str, raw: Option<String>) -> Option<gba::data::SaveType> {
+    match raw.as_deref() {
+        None => Some(gba::data::SaveType::Sram),
+        Some(s) => match gba::data::SaveType::from_user(s) {
+            Some(st) => Some(st),
+            None => {
+                op_err(json, cmd, &i18n::tf("save.type_invalid", &[("v", s)]));
+                None
+            }
+        },
+    }
+}
+
+/// MBC 不支持 FLASH / 免电；校验类型合法性。
+fn mbc_save_type(st: gba::data::SaveType) -> gba::data::SaveType {
+    match st {
+        gba::data::SaveType::Flash | gba::data::SaveType::Batteryless => gba::data::SaveType::Sram,
+        other => other,
+    }
+}
+
+/// 读卡带确定 MBC 代次 + 默认存档大小（头 0x149）。
+fn mbc_save_defaults(link: &mut CartridgeLink) -> (mbc::data::MbcKind, u64) {
+    let ct = mbc::ops::read::read_cart_byte(link, 0x147).unwrap_or(0xFF);
+    let kind = mbc::data::MbcKind::from_cartridge_type(ct);
+    let ram = match mbc::ops::read::read_cart_byte(link, 0x149) {
+        Some(code) => mbc::ops::read::ram_size(code),
+        None => 0,
+    };
+    (kind, ram)
+}
+
+/// `cfb save-dump --out <f> [--mbc] [--type ...] [--len N]` —— 导出存档。
+pub fn cmd_save_dump(
+    json: bool,
+    port: Option<String>,
+    out_path: &str,
+    mbc: bool,
+    type_raw: Option<String>,
+    len_opt: Option<u64>,
+) -> ExitCode {
+    let cmd = "save-dump";
+    let Some(st) = parse_save_type(json, cmd, type_raw) else {
+        return ExitCode::from(2);
+    };
+    let Some(mut link) = open_powered(json, cmd, port, mbc) else {
+        return ExitCode::from(3);
+    };
+    let mut last_mb = u64::MAX;
+    let mut progress = |d: u64, t: u64| progress_emit(json, d, t, &mut last_mb);
+    let mut log = |m: &str| log_emit(json, m);
+
+    let res = if mbc {
+        let st = mbc_save_type(st);
+        let (kind, ram) = mbc_save_defaults(&mut link);
+        let len = len_opt.unwrap_or(ram);
+        if len == 0 {
+            device::power_off(&mut link);
+            op_err(json, cmd, &i18n::t("op.no_size"));
+            return ExitCode::from(3);
+        }
+        let r = mbc::ops::save::dump(&mut link, kind, matches!(st, gba::data::SaveType::Fram), len, out_path, &mut log, &mut progress);
+        emit_save_info(json, st, None, r.bytes);
+        r
+    } else {
+        match st {
+            gba::data::SaveType::Batteryless => {
+                // 免电：需先 dump 出 ROM 镜像做魔数定位。用 CFI 容量决定读多长。
+                let dev_size = gba::ops::read_info(&mut link).device_size;
+                if dev_size == 0 {
+                    device::power_off(&mut link);
+                    op_err(json, cmd, &i18n::t("op.no_size"));
+                    return ExitCode::from(3);
+                }
+                let mirror = read_rom_mirror(&mut link, dev_size, &mut progress);
+                let r = gba::ops::save::dump_batteryless(&mut link, &mirror, out_path, &mut log, &mut progress);
+                emit_save_info(json, st, gba::ops::save::batteryless_locate(&mirror).map(|(o, _)| o), r.bytes);
+                r
+            }
+            gba::data::SaveType::Sram | gba::data::SaveType::Flash | gba::data::SaveType::Fram => {
+                // GBA SRAM/FLASH/FRAM 默认 64KiB（与 C# 默认一致），可用 --len 覆盖。
+                let len = len_opt.unwrap_or(64 * 1024);
+                let r = gba::ops::save::dump(&mut link, st, len, out_path, &mut log, &mut progress);
+                emit_save_info(json, st, None, r.bytes);
+                r
+            }
+        }
+    };
+    device::power_off(&mut link);
+    finish(json, cmd, res.success, res.bytes, res.mismatch_bytes, res.seconds)
+}
+
+/// `cfb save-write --file <f> [--mbc] [--type ...]` —— 写入存档。
+pub fn cmd_save_write(
+    json: bool,
+    port: Option<String>,
+    file_path: &str,
+    mbc: bool,
+    type_raw: Option<String>,
+) -> ExitCode {
+    let cmd = "save-write";
+    let Some(st) = parse_save_type(json, cmd, type_raw) else {
+        return ExitCode::from(2);
+    };
+    let data = match std::fs::read(file_path) {
+        Ok(d) => d,
+        Err(e) => {
+            op_err(json, cmd, &i18n::tf("op.read_fail", &[("path", file_path), ("err", &e.to_string())]));
+            return ExitCode::from(2);
+        }
+    };
+    let Some(mut link) = open_powered(json, cmd, port, mbc) else {
+        return ExitCode::from(3);
+    };
+    let mut last_mb = u64::MAX;
+    let mut progress = |d: u64, t: u64| progress_emit(json, d, t, &mut last_mb);
+    let mut log = |m: &str| log_emit(json, m);
+
+    let res = if mbc {
+        let st = mbc_save_type(st);
+        let (kind, _) = mbc_save_defaults(&mut link);
+        let r = mbc::ops::save::write(&mut link, kind, matches!(st, gba::data::SaveType::Fram), &data, &mut log, &mut progress);
+        emit_save_info(json, st, None, r.bytes);
+        r
+    } else {
+        match st {
+            gba::data::SaveType::Batteryless => {
+                let dev_size = gba::ops::read_info(&mut link).device_size;
+                if dev_size == 0 {
+                    device::power_off(&mut link);
+                    op_err(json, cmd, &i18n::t("op.no_size"));
+                    return ExitCode::from(3);
+                }
+                let buffer_write_bytes = gba::ops::read_info(&mut link).buffer_write_bytes as u16;
+                let mirror = read_rom_mirror(&mut link, dev_size, &mut progress);
+                let r = gba::ops::save::write_batteryless(&mut link, &mirror, buffer_write_bytes, &data, &mut log, &mut progress);
+                emit_save_info(json, st, gba::ops::save::batteryless_locate(&mirror).map(|(o, _)| o), r.bytes);
+                r
+            }
+            gba::data::SaveType::Sram | gba::data::SaveType::Flash | gba::data::SaveType::Fram => {
+                let r = gba::ops::save::write(&mut link, st, &data, &mut log, &mut progress);
+                emit_save_info(json, st, None, r.bytes);
+                r
+            }
+        }
+    };
+    device::power_off(&mut link);
+    finish(json, cmd, res.success, res.bytes, res.mismatch_bytes, res.seconds)
+}
+
+/// `cfb save-verify --file <f> [--mbc] [--type ...]` —— 校验存档。
+pub fn cmd_save_verify(
+    json: bool,
+    port: Option<String>,
+    file_path: &str,
+    mbc: bool,
+    type_raw: Option<String>,
+) -> ExitCode {
+    let cmd = "save-verify";
+    let Some(st) = parse_save_type(json, cmd, type_raw) else {
+        return ExitCode::from(2);
+    };
+    let data = match std::fs::read(file_path) {
+        Ok(d) => d,
+        Err(e) => {
+            op_err(json, cmd, &i18n::tf("op.read_fail", &[("path", file_path), ("err", &e.to_string())]));
+            return ExitCode::from(2);
+        }
+    };
+    let Some(mut link) = open_powered(json, cmd, port, mbc) else {
+        return ExitCode::from(3);
+    };
+    let mut last_mb = u64::MAX;
+    let mut progress = |d: u64, t: u64| progress_emit(json, d, t, &mut last_mb);
+    let mut log = |m: &str| log_emit(json, m);
+
+    let res = if mbc {
+        let st = mbc_save_type(st);
+        let (kind, _) = mbc_save_defaults(&mut link);
+        let r = mbc::ops::save::verify(&mut link, kind, matches!(st, gba::data::SaveType::Fram), &data, &mut log, &mut progress);
+        emit_save_info(json, st, None, r.bytes);
+        r
+    } else {
+        match st {
+            gba::data::SaveType::Batteryless => {
+                let dev_size = gba::ops::read_info(&mut link).device_size;
+                if dev_size == 0 {
+                    device::power_off(&mut link);
+                    op_err(json, cmd, &i18n::t("op.no_size"));
+                    return ExitCode::from(3);
+                }
+                let mirror = read_rom_mirror(&mut link, dev_size, &mut progress);
+                let r = gba::ops::save::verify_batteryless(&mut link, &mirror, &data, &mut log, &mut progress);
+                emit_save_info(json, st, gba::ops::save::batteryless_locate(&mirror).map(|(o, _)| o), r.bytes);
+                r
+            }
+            gba::data::SaveType::Sram | gba::data::SaveType::Flash | gba::data::SaveType::Fram => {
+                let r = gba::ops::save::verify(&mut link, st, &data, &mut log, &mut progress);
+                emit_save_info(json, st, None, r.bytes);
+                r
+            }
+        }
+    };
+    device::power_off(&mut link);
+    finish(json, cmd, res.success, res.bytes, res.mismatch_bytes, res.seconds)
+}
+
+/// 读出整个 ROM 镜像（用于免电魔数定位）。失败重连重试。
+fn read_rom_mirror(
+    link: &mut CartridgeLink,
+    len: u64,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Vec<u8> {
+    const PACKET: usize = 4096;
+    let mut mirror = vec![0u8; len as usize];
+    let mut pos = 0u64;
+    let mut buf = vec![0u8; PACKET];
+    while pos < len {
+        let n = ((len - pos) as usize).min(PACKET);
+        let b = &mut buf[..n];
+        if !link.rom_read(pos as u32, b) {
+            let _ = link.reconnect();
+            continue;
+        }
+        mirror[pos as usize..pos as usize + n].copy_from_slice(b);
+        pos += n as u64;
+        progress(pos, len);
+    }
+    mirror
+}
+
+/// 发出 save_info 事件（人类模式静默；offset 仅免电有值）。
+fn emit_save_info(json: bool, st: gba::data::SaveType, offset: Option<u64>, size: u64) {
+    if json {
+        emit(&Event::SaveInfo {
+            save_type: st.label().to_string(),
+            offset,
+            size,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -577,6 +822,7 @@ mod tests {
         rom[0x143] = 0x80;
         rom[0x147] = 0x10;
         rom[0x148] = 0x05;
+        rom[0x149] = 0x03; // 32KB RAM
         let mut checksum = 0u8;
         for &byte in &rom[0x134..=0x14c] {
             checksum = checksum.wrapping_sub(byte).wrapping_sub(1);
@@ -587,7 +833,33 @@ mod tests {
         assert_eq!(h.title, "POKEMON");
         assert_eq!(h.mbc_name, "MBC3");
         assert_eq!(h.rom_size_bytes, 1024 * 1024);
+        assert_eq!(h.ram_size_bytes, 32 * 1024, "0x149=0x03 应为 32KB RAM");
         assert!(h.rtc);
         assert!(h.header_checksum.ok);
+    }
+
+    #[test]
+    fn mbc_ram_size_table() {
+        // 标准 GB RAM size 编码（头 0x149）。
+        assert_eq!(mbc::ops::read::ram_size(0x00), 0);
+        assert_eq!(mbc::ops::read::ram_size(0x01), 2 * 1024);
+        assert_eq!(mbc::ops::read::ram_size(0x02), 8 * 1024);
+        assert_eq!(mbc::ops::read::ram_size(0x03), 32 * 1024);
+        assert_eq!(mbc::ops::read::ram_size(0x04), 128 * 1024);
+        assert_eq!(mbc::ops::read::ram_size(0x05), 64 * 1024);
+        assert_eq!(mbc::ops::read::ram_size(0xFF), 0, "未知编码按 0");
+    }
+
+    #[test]
+    fn save_type_parses() {
+        use gba::data::SaveType;
+        assert_eq!(SaveType::from_user("sram"), Some(SaveType::Sram));
+        assert_eq!(SaveType::from_user("FLASH"), Some(SaveType::Flash));
+        assert_eq!(SaveType::from_user("Fram"), Some(SaveType::Fram));
+        assert_eq!(SaveType::from_user("batteryless"), Some(SaveType::Batteryless));
+        assert_eq!(SaveType::from_user("bat"), Some(SaveType::Batteryless));
+        assert_eq!(SaveType::from_user("nope"), None);
+        assert_eq!(SaveType::Sram.label(), "SRAM");
+        assert_eq!(SaveType::Batteryless.label(), "Batteryless");
     }
 }
