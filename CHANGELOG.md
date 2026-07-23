@@ -18,6 +18,10 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **授权由 MIT 改为 GPL-3.0**：因 `chis-burner-rule` 子库（flashGBX 派生）是 GPL-3.0，其 profile 数据被 `build.rs` 编进 cfb 二进制后，整体按 GPL 传染；下游客户端 beggar_chis 打包 cfb 二进制后亦 GPL。统一 GPL-3.0 消除授权矛盾（cfb 复刻的 beggar_socket 为 WTFPL，允许 relicensing）。
+
 ### 新增
 
 - **flash 芯片 profile 子库**：把 [flashGBX](https://github.com/lesserkuma/FlashGBX)（Lesserkuma，GPL-3.0）的 154 个 flash 芯片定义转换成 cfb profile，作为独立子库 [chis-burner-rule](https://github.com/eyenobig/chis-burner-rule)（git submodule 挂 `vendor/`）。`build.rs` 在编译期把子库 + `src/profiles/` 共 **156 个** profile 编进二进制——无需配置即覆盖 S29GL / MX29 / AM29 / M29W / SST39 / 28F / insideGadgets 系等常见 GBA/GB 可写卡带。CI 加 `submodules: true`。
