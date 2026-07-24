@@ -110,6 +110,15 @@ jobs:
     if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
+      # 取仓库代码，仅为读 CHANGELOG.md（发版正文的唯一来源，见 docs/ci.md）。
+      # 必须放在 download-artifact / flatten 之前：checkout 默认 clean=true，会
+      # `git clean -ffdx` 掉工作区里所有未纳入版本控制的文件——如果放在后面，
+      # 会把刚下载/整理好的 release/、artifacts/ 目录整个清空，导致发布的 Release
+      # 附件永远是空的（v0.2.0/v0.3.0 曾踩过此坑，正文有、二进制没有）。
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
       # 关掉 download 的 fail，允许部分 build 作业没产出 artifact 时继续。
       # （download-artifact@v4 在「一个 artifact 都没有」时会失败，这里 continue-on-error
       #   放过它，真正的「空」兜底在 flatten 步骤。）
@@ -131,11 +140,6 @@ jobs:
             echo "::error::没有任何 build 作业产出 cfb 二进制，无法发版。"
             exit 1
           fi
-
-      # 取仓库代码，仅为读 CHANGELOG.md（发版正文的唯一来源，见 docs/ci.md）。
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
 
       # 从 CHANGELOG.md 抽取当前 tag（如 v0.1.0）那一节，作为 Release 正文。
       # 抽不到（漏写/格式不符）不阻断发版——下一步会退回 GitHub 自动生成。

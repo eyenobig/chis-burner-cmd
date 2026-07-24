@@ -18,6 +18,12 @@
 
 ## [Unreleased]
 
+## [v0.3.1] - 2026-07-24
+
+### 修复
+
+- **发版 CI 附件永远是空的**：`release` job 里 `actions/checkout@v4` 放在了下载/整理二进制产物之后，其默认 `clean: true` 会 `git clean -ffdx` 清空工作区里未纳入版本控制的文件，把刚准备好的 `release/`/`artifacts/` 目录整个删掉，导致 Release 正文有、二进制附件却永远为空（v0.2.0、v0.3.0 均中招）。把 checkout 挪到最前面即可。
+
 ## [v0.3.0] - 2026-07-24
 
 ### 变更
