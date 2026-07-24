@@ -45,9 +45,7 @@ fn switch_ram_bank(link: &mut CartridgeLink, kind: MbcKind, bank: u32) {
 
 /// reconnect 后的复位：重上 5V + 重新使能 RAM。
 fn rearm(link: &mut CartridgeLink, kind: MbcKind, bank: u32) {
-    let _ = link.reconnect();
-    crate::device::power(link, crate::device::data::Voltage::V5);
-    link.gbc_warm_up();
+    let _ = link.reconnect_as(true);
     ram_enable(link);
     switch_ram_bank(link, kind, bank);
 }

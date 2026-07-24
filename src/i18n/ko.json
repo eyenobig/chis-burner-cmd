@@ -64,6 +64,7 @@
   "resolve.using_saved": "기억한 포트 {port} 사용",
   "resolve.auto": "포트 {port} 자동 선택",
   "resolve.saved_absent": "기억한 포트 {port}가 현재 오프라인.",
+  "resolve.need_select": "라이터가 여러 대입니다. 먼저 cfb select --port <포트>를 실행하세요.",
   "err.no_burner": "라이터를 검출할 수 없음 (VID_{vid} / PID_{pid}).",
   "todo.with_port": "{cmd} 미구현（포트 {port} 사용 예정, 프로토콜 층은 C#에서 이식 예정）.",
   "todo.no_port": "{cmd} 미구현, 그리고 라이터를 검출할 수 없습니다.",

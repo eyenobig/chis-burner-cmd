@@ -67,6 +67,7 @@
   "resolve.using_saved": "Using remembered port {port}",
   "resolve.auto": "Auto-selected port {port}",
   "resolve.saved_absent": "Remembered port {port} is currently offline.",
+  "resolve.need_select": "Multiple burners detected; run cfb select --port <port> first.",
   "err.no_burner": "No burner detected (VID_{vid} / PID_{pid}).",
   "todo.with_port": "{cmd} is not implemented yet (would use port {port}; protocol layer to be ported from C#).",
   "todo.no_port": "{cmd} is not implemented yet, and no burner is currently detected.",

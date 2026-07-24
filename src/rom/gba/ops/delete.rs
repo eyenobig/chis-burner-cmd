@@ -68,6 +68,8 @@ pub fn erase_range_logged(
     let mut off = start;
     let mut done = 0u64;
     log(&format!("扇区 {ss}B x {total}"));
+    // 开局先报 0/total，避免首扇区耗时长时客户端一直停在裸「擦除」无分数。
+    progress(0, total);
     while off < to {
         if !erase_sector(link, off, 5) {
             log(&format!(

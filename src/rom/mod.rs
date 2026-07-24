@@ -19,86 +19,106 @@ use mbc::data::MbcHeader;
 
 /// `cfb info` —— 读 flash 芯片 + 卡带/游戏信息（人类可读 / `--json`）。
 pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
-    let port = match device::resolve_port(port) {
-        Some(p) => p,
-        None => {
-            if json {
-                emit(&Event::Error {
-                    command: "info".to_string(),
-                    message: i18n::tf(
-                        "err.no_burner",
-                        &[("vid", &format!("{USB_VID:04X}")), ("pid", &format!("{USB_PID:04X}"))],
-                    ),
-                });
-            }
-            return ExitCode::from(2);
+    // 与 burn/erase 共用 open_powered，避免 info 自管上电时序与成功路径不一致。
+    // 接触抖动最多再整段重开 1 次。
+    let mut last_err: Option<String> = None;
+    for attempt in 0..2 {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(if mbc { 80 } else { 60 }));
         }
-    };
-
-    let mut link = CartridgeLink::new(&port);
-    if let Err(e) = link.open() {
-        emit_or_eprint(json, &i18n::tf("info.err_open", &[("port", &port), ("err", &e.to_string())]));
-        return ExitCode::from(3);
-    }
-
-    device::power(&mut link, device::voltage_for(if mbc { CartridgeKind::GbMbc } else { CartridgeKind::Gba }));
-    if mbc {
-        link.gbc_warm_up();
-        let raw = mbc::ops::read::read_live_header(&mut link);
-        let (capacity, buffer) = mbc::ops::read::rom_get_size(&mut link);
-        device::power_off(&mut link);
-        let Some(raw) = raw else {
-            // 读失败或无有效 GB 头（含：空白片 / 错电压下的 GBA 卡）→ 勿 emit 假 info
-            emit_or_eprint(json, &i18n::t("info.no_cartridge"));
+        let Some(mut link) = open_powered(json, "info", port.clone(), mbc) else {
             return ExitCode::from(3);
         };
+        let port_name = link_port_name(&link);
+
+        if mbc {
+            // 头与 CFI 互相干扰：先 CFI 则头区常读全 FF；先大块读头则 CFI 偶发容量 0。
+            // 策略：短探头 → CFI；有效头或 CFI 有容量即成功（空片靠 CFI，有游戏靠头）。
+            let probe = mbc::ops::read::probe_live_header(&mut link);
+            let (capacity, buffer) = mbc::ops::read::rom_get_size(&mut link);
+            let raw = match probe {
+                mbc::ops::read::HeaderProbe::Valid(h) => Some(h),
+                mbc::ops::read::HeaderProbe::NoGame if capacity > 0 => Some([0xFFu8; 0x180]),
+                mbc::ops::read::HeaderProbe::NoGame => None,
+            };
+            if let Some(raw) = raw {
+                device::power_off(&mut link);
+                let _ = crate::config::save_selected(&port_name);
+                if json {
+                    emit_mbc_info(&port_name, capacity, buffer, &raw);
+                } else {
+                    let header = mbc::ops::read::parse_header(&raw);
+                    print_mbc_human(
+                        Some(&port_name),
+                        capacity,
+                        Some(buffer),
+                        &header,
+                        enrich_mbc(&raw, &header),
+                    );
+                }
+                return ExitCode::SUCCESS;
+            }
+            device::power_off(&mut link);
+            last_err = Some(i18n::t("info.no_cartridge"));
+            continue;
+        }
+
+        let flash = gba::ops::read_info(&mut link);
+        let present = gba::ops::flash_present(&flash);
+        if !present {
+            device::power_off(&mut link);
+            last_err = Some(i18n::t("info.no_cartridge"));
+            continue;
+        }
+
+        let header = {
+            let mut h = [0u8; 0x180];
+            if link.rom_read(0, &mut h) {
+                Some(h)
+            } else {
+                None
+            }
+        };
+        device::power_off(&mut link);
+        let _ = crate::config::save_selected(&port_name);
+
+        let kind = match header.as_ref() {
+            Some(h) if gba::ops::is_gba_header(h) => CartridgeKind::Gba,
+            _ => CartridgeKind::Unknown,
+        };
+        let game: Option<GbaHeader> = match (kind, header.as_ref()) {
+            (CartridgeKind::Gba, Some(h)) => Some(gba::ops::parse_header(h)),
+            _ => None,
+        };
+
         if json {
-            emit_mbc_info(&port, capacity, buffer, &raw);
+            emit_gba_info(
+                &port_name,
+                kind.as_str(),
+                &flash.id_hex(),
+                flash.device_size,
+                flash.buffer_write_bytes,
+                flash.sector_size,
+                flash.sector_count,
+                game.as_ref(),
+                header.as_ref().map(|h| h.as_slice()),
+            );
         } else {
-            let header = mbc::ops::read::parse_header(&raw);
-            print_mbc_human(Some(&port), capacity, Some(buffer), &header, enrich_mbc(&raw, &header));
+            let friendly = header
+                .as_ref()
+                .and_then(|h| crate::gamedb::lookup_agb(h))
+                .map(|e| e.gn);
+            print_human(&port_name, kind, &flash, game.as_ref(), friendly.as_deref());
         }
         return ExitCode::SUCCESS;
     }
 
-    link.warm_up();
-    let flash = gba::ops::read_info(&mut link);
-    let present = gba::ops::flash_present(&flash);
+    emit_or_eprint(json, last_err.as_deref().unwrap_or(&i18n::t("info.no_cartridge")));
+    ExitCode::from(3)
+}
 
-    // flash 在位才有必要读 GBA 总线头做判别/解析。读 0x180 是为算 header SHA1 查游戏名。
-    let header = if present {
-        let mut h = [0u8; 0x180];
-        if link.rom_read(0, &mut h) {
-            Some(h)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    device::power_off(&mut link);
-
-    if !present {
-        emit_or_eprint(json, &i18n::t("info.no_cartridge"));
-        return ExitCode::from(3);
-    }
-
-    let kind = match header.as_ref() {
-        Some(h) if gba::ops::is_gba_header(h) => CartridgeKind::Gba,
-        _ => CartridgeKind::Unknown,
-    };
-    let game: Option<GbaHeader> = match (kind, header.as_ref()) {
-        (CartridgeKind::Gba, Some(h)) => Some(gba::ops::parse_header(h)),
-        _ => None,
-    };
-
-    if json {
-        emit_gba_info(&port, kind.as_str(), &flash.id_hex(), flash.device_size, flash.buffer_write_bytes, flash.sector_size, flash.sector_count, game.as_ref(), header.as_ref().map(|h| h.as_slice()));
-    } else {
-        let friendly = header.as_ref().and_then(|h| crate::gamedb::lookup_agb(h)).map(|e| e.gn);
-        print_human(&port, kind, &flash, game.as_ref(), friendly.as_deref());
-    }
-    ExitCode::SUCCESS
+fn link_port_name(link: &CartridgeLink) -> String {
+    link.port_name().to_string()
 }
 
 /// 发出一条 GBA 侧 `info` 事件（`cmd_info` 实时读 / `cmd_rom_info` 离线解析共用）。
@@ -174,6 +194,32 @@ fn enrich_mbc(raw: &[u8], h: &MbcHeader) -> MbcEnrich {
 /// `capacity`/`buffer` 传 0 表示离线场景（无 flash CFI 数据），回落用头部 `rom_size_bytes`。
 /// `raw` 须至少 0x150（查库最好 0x180）。
 fn emit_mbc_info(port: &str, capacity: u64, buffer: u16, raw: &[u8]) {
+    // 空片：只报 flash 在位，不把全 0xFF 头解析成 Unknown/rev 255。
+    if raw.len() >= 0x150 && common::ops::is_blank(&raw[..0x150]) {
+        emit(&Event::Info {
+            port: port.to_string(),
+            present: true,
+            kind: "gb_mbc".to_string(),
+            id: String::new(),
+            capacity_bytes: capacity,
+            buffer_write_bytes: buffer as u32,
+            sector_size: 0,
+            sector_count: 0,
+            game_name: None,
+            rom_title: None,
+            game_code: None,
+            revision: None,
+            rom_checksum: None,
+            rtc: None,
+            save_size_bytes: None,
+            cartridge_type: None,
+            mbc_name: None,
+            batteryless_offset: None,
+            batteryless_size: None,
+            batteryless_layout: None,
+        });
+        return;
+    }
     let h = mbc::ops::read::parse_header(raw);
     let en = enrich_mbc(raw, &h);
     emit(&Event::Info {
@@ -192,7 +238,6 @@ fn emit_mbc_info(port: &str, capacity: u64, buffer: u16, raw: &[u8]) {
         rom_checksum: Some(h.header_checksum.clone()),
         rtc: Some(h.rtc),
         save_size_bytes: if h.ram_size_bytes > 0 { Some(h.ram_size_bytes) } else { None },
-        // GB/GBC 没有 Game Code 时，卡带类型（maptype）是最接近的"身份代号"。
         cartridge_type: Some(h.cartridge_type),
         mbc_name: Some(h.mbc_name.to_string()),
         batteryless_offset: en.batteryless.as_ref().map(|b| b.offset),
@@ -370,7 +415,10 @@ fn open_powered(json: bool, cmd: &str, port: Option<String>, mbc: bool) -> Optio
     if !mbc {
         link.warm_up();
     } else {
-        link.gbc_warm_up(); // MBC：GB 总线版，吸收上电首包 + flash 复位
+        // 短 settle + GB 总线 warm_up；bank 初值走 switch_bank（与 burn/info 同一套锁存）。
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        link.gbc_warm_up();
+        mbc::ops::read::switch_bank(&mut link, 1, mbc::data::MbcKind::Mbc5);
     }
     Some(link)
 }
@@ -539,47 +587,85 @@ pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
     let mut progress = |d: u64, t: u64| progress_emit(json, d, t, &mut last_mb);
     let ok = if mbc {
         // CFI 查容量+扇区大小；卡上实读 MBC 代次决定 bank/地址映射（同 burn 逻辑）。
-        let (device_size, _buf, sector_size) = mbc::ops::read::rom_get_cfi(&mut link);
-        if device_size > 0 {
-            let live_ct = mbc::ops::read::read_cart_byte(&mut link, 0x147).unwrap_or(0xFF);
-            let kind = match live_ct {
-                0x0F..=0x13 => mbc::data::MbcKind::Mbc3,
-                _ => mbc::data::MbcKind::Mbc5,
-            };
-            link.gbc_write(0x00, &[0xf0]); // CFI 后强制复位，避免残留查询模式导致擦除无响应
-            link.gbc_warm_up();
-            log(&format!("擦除全片: flash={device_size} sector={sector_size}"));
-            mbc::ops::delete::erase_range_logged(
-                &mut link,
-                kind,
-                0,
-                device_size,
-                sector_size,
-                &mut progress,
-                &mut log,
-            )
+        // CFI 无容量时与 info 一致：回落头 0x148，再不行默认 8MiB；仍走扇区擦除以便上报进度。
+        let (cfi_size, _buf, sector_size) = mbc::ops::read::rom_get_cfi(&mut link);
+        let live_ct = mbc::ops::read::read_cart_byte(&mut link, 0x147).unwrap_or(0xFF);
+        let kind = match live_ct {
+            0x0F..=0x13 => mbc::data::MbcKind::Mbc3,
+            _ => mbc::data::MbcKind::Mbc5,
+        };
+        let device_size = if cfi_size > 0 {
+            cfi_size
         } else {
-            log("容量未知（CFI 无响应），执行整片擦除（无分段进度）...");
-            mbc::ops::delete::erase_chip(&mut link, 240)
+            let fb = match mbc::ops::read::read_cart_byte(&mut link, 0x148) {
+                Some(code) if code <= 8 => (32 * 1024u64) << code,
+                _ => 8 * 1024 * 1024,
+            };
+            log(&format!(
+                "CFI 无容量，按 {fb} 扇区擦除 (sector={sector_size})"
+            ));
+            fb
+        };
+        link.gbc_write(0x00, &[0xf0]); // CFI 后强制复位，避免残留查询模式导致擦除无响应
+        link.gbc_warm_up();
+        log(&format!("擦除全片: flash={device_size} sector={sector_size}"));
+        let sector_ok = mbc::ops::delete::erase_range_logged(
+            &mut link,
+            kind,
+            0,
+            device_size,
+            sector_size,
+            &mut progress,
+            &mut log,
+        );
+        if sector_ok {
+            true
+        } else {
+            // 扇区路径失败时回落整片擦除，仍发 0/1→1/1 让客户端 drawer 有百分比
+            log("扇区擦除失败，回落整片擦除...");
+            progress(0, 1);
+            let chip_ok = mbc::ops::delete::erase_chip(&mut link, 240);
+            if chip_ok {
+                progress(1, 1);
+            }
+            chip_ok
         }
     } else {
         let flash = gba::ops::read::read_info(&mut link);
-        if flash.device_size > 0 {
-            log(&format!(
-                "擦除全片: flash={} sector={}",
-                flash.device_size, flash.sector_size
-            ));
-            gba::ops::delete::erase_range_logged(
-                &mut link,
-                0,
-                flash.device_size as u32,
-                flash.sector_size,
-                &mut progress,
-                &mut log,
-            )
+        let (device_size, sector_size) = if flash.device_size > 0 {
+            (flash.device_size, flash.sector_size)
         } else {
-            log("容量未知（CFI 无响应），执行整片擦除（无分段进度）...");
-            gba::ops::delete::erase_chip(&mut link, 240)
+            // CFI 失败：默认 16MiB / 64KiB（常见 GBA 复制卡），保证仍有进度事件
+            let fb = 16 * 1024 * 1024u64;
+            let ss = if flash.sector_size > 0 {
+                flash.sector_size
+            } else {
+                64 * 1024
+            };
+            log(&format!("CFI 无容量，按 {fb} 扇区擦除 (sector={ss})"));
+            (fb, ss)
+        };
+        log(&format!(
+            "擦除全片: flash={device_size} sector={sector_size}"
+        ));
+        let sector_ok = gba::ops::delete::erase_range_logged(
+            &mut link,
+            0,
+            device_size as u32,
+            sector_size,
+            &mut progress,
+            &mut log,
+        );
+        if sector_ok {
+            true
+        } else {
+            log("扇区擦除失败，回落整片擦除...");
+            progress(0, 1);
+            let chip_ok = gba::ops::delete::erase_chip(&mut link, 240);
+            if chip_ok {
+                progress(1, 1);
+            }
+            chip_ok
         }
     };
     let secs = t0.elapsed().as_secs_f64();

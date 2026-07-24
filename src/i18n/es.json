@@ -64,6 +64,7 @@
   "resolve.using_saved": "Usando puerto recordado {port}",
   "resolve.auto": "Puerto {port} auto-seleccionado",
   "resolve.saved_absent": "El puerto recordado {port} está actualmente desconectado.",
+  "resolve.need_select": "Varios grabadores detectados; ejecute cfb select --port <puerto> primero.",
   "err.no_burner": "No se detectó grabador (VID_{vid} / PID_{pid}).",
   "todo.with_port": "{cmd} aún no implementado (usaría el puerto {port}; capa de protocolo pendiente de portar desde C#).",
   "todo.no_port": "{cmd} aún no implementado, y no se detecta grabador.",

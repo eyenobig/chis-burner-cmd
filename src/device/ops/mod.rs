@@ -118,29 +118,35 @@ pub fn enumerate() -> Vec<PortInfo> {
     match serialport::available_ports() {
         Ok(ports) => {
             for p in ports {
-                let (vid, pid, name) = match &p.port_type {
+                let (vid, pid, name, serial) = match &p.port_type {
                     SerialPortType::UsbPort(UsbPortInfo {
                         vid,
                         pid,
                         product,
                         manufacturer,
+                        serial_number,
                         ..
                     }) => {
                         let nm = product
                             .clone()
                             .or_else(|| manufacturer.clone())
                             .unwrap_or_else(|| i18n::t("dev.usb"));
-                        (Some(*vid), Some(*pid), nm)
+                        let sn = serial_number
+                            .as_ref()
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty());
+                        (Some(*vid), Some(*pid), nm, sn)
                     }
-                    SerialPortType::PciPort => (None, None, i18n::t("dev.pci")),
-                    SerialPortType::BluetoothPort => (None, None, i18n::t("dev.bt")),
-                    SerialPortType::Unknown => (None, None, i18n::t("dev.unknown")),
+                    SerialPortType::PciPort => (None, None, i18n::t("dev.pci"), None),
+                    SerialPortType::BluetoothPort => (None, None, i18n::t("dev.bt"), None),
+                    SerialPortType::Unknown => (None, None, i18n::t("dev.unknown"), None),
                 };
                 result.push(PortInfo {
                     port: p.port_name,
                     name,
                     vid,
                     pid,
+                    serial,
                 });
             }
         }
@@ -180,11 +186,16 @@ fn hexpid() -> String {
     format!("{USB_PID:04X}")
 }
 
-/// 解析要用的端口：显式 --port > `select` 记住的(仍在线) > 自动第一个烧录器。
+/// 解析要用的端口：显式 --port（仍在线）> `select` 记住的(仍在线) > 仅一台时自动。
+/// 多台且未指定/未记住时不任意挑第一台，避免写错设备。
+/// 显式/记住的 COM 若已因 USB 重枚举消失，再按上述规则回落。
 /// 诊断信息一律走 stderr，避免污染 --json 的 stdout 事件流。返回 None 表示找不到。
 pub fn resolve_port(explicit: Option<String>) -> Option<String> {
     if let Some(p) = explicit {
-        return Some(p);
+        if port_present(&p) {
+            return Some(p);
+        }
+        eprintln!("{}", i18n::tf("resolve.saved_absent", &[("port", &p)]));
     }
     if let Some(saved) = config::load_selected() {
         if port_present(&saved) {
@@ -193,15 +204,27 @@ pub fn resolve_port(explicit: Option<String>) -> Option<String> {
         }
         eprintln!("{}", i18n::tf("resolve.saved_absent", &[("port", &saved)]));
     }
-    if let Some(p) = first_burner() {
-        eprintln!("{}", i18n::tf("resolve.auto", &[("port", &p)]));
-        return Some(p);
+    let burners = list_burners();
+    match burners.len() {
+        0 => {
+            eprintln!(
+                "{}",
+                i18n::tf("err.no_burner", &[("vid", &hexvid()), ("pid", &hexpid())])
+            );
+            None
+        }
+        1 => {
+            let p = burners[0].port.clone();
+            eprintln!("{}", i18n::tf("resolve.auto", &[("port", &p)]));
+            // 自动命中后顺便纠正过期的 select，减少下次仍走旧口。
+            let _ = config::save_selected(&p);
+            Some(p)
+        }
+        _ => {
+            eprintln!("{}", i18n::t("resolve.need_select"));
+            None
+        }
     }
-    eprintln!(
-        "{}",
-        i18n::tf("err.no_burner", &[("vid", &hexvid()), ("pid", &hexpid())])
-    );
-    None
 }
 
 /// `cfb detect` —— 只列出已连接的烧录器（非烧录器串口不显示）。
@@ -220,6 +243,7 @@ pub fn cmd_detect(json: bool) -> ExitCode {
                 burner: true,
                 open: can_open(&p.port),
                 name: p.name.clone(),
+                serial: p.serial.clone(),
             });
         }
         emit(&Event::Summary {
@@ -238,7 +262,12 @@ pub fn cmd_detect(json: bool) -> ExitCode {
             } else {
                 i18n::t("detect.busy")
             };
-            println!("  [{}] {:<8} {} {}{}", i, p.port, p.vidpid(), p.name, busy);
+            let sn = p
+                .serial
+                .as_deref()
+                .map(|s| format!(" SN:{s}"))
+                .unwrap_or_default();
+            println!("  [{}] {:<8} {} {}{}{}", i, p.port, p.vidpid(), p.name, sn, busy);
         }
         println!(
             "{}",

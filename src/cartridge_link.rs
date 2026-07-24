@@ -48,6 +48,10 @@ impl CartridgeLink {
         self.sp.is_some()
     }
 
+    pub fn port_name(&self) -> &str {
+        &self.port_name
+    }
+
     /// 打开串口并复位命令缓冲。
     pub fn open(&mut self) -> std::io::Result<()> {
         self.close();
@@ -71,13 +75,24 @@ impl CartridgeLink {
     }
 
     /// 关/重开串口并重新上电——用于 MCU 卡死后的复活。
+    /// `gbc=true` 时上 5V 并用 GB 总线复位（MBC 烧录/擦除/校验路径）。
     #[allow(dead_code)] // 供后续 burn 的卡死复活使用
     pub fn reconnect(&mut self) -> std::io::Result<()> {
+        self.reconnect_as(false)
+    }
+
+    /// 按总线类型重连：GBA→3.3V+`warm_up`；GB/MBC→5V+`gbc_warm_up`。
+    pub fn reconnect_as(&mut self, gbc: bool) -> std::io::Result<()> {
         self.close();
         std::thread::sleep(Duration::from_millis(700));
         self.open()?;
-        self.power(1); // 3.3V
-        self.warm_up();
+        if gbc {
+            self.power(2); // 5V
+            self.gbc_warm_up();
+        } else {
+            self.power(1); // 3.3V
+            self.warm_up();
+        }
         Ok(())
     }
 
@@ -282,17 +297,23 @@ impl CartridgeLink {
     }
 
     /// GB 卡 ROM 编程(缓冲写)（cmd 0xfc）。
+    /// 单包可达 4KiB（固件内按 buffer 切分轮询 DQ），默认 800ms 读超时偏紧，这里临时放宽。
     pub fn gbc_rom_program(&mut self, addr: u32, data: &[u8], buffer_write_bytes: u16) -> bool {
+        let save = self.response_timeout;
+        self.response_timeout = Duration::from_millis(3_000);
         let mut pl = vec![0u8; 7 + data.len()];
         pl[0] = 0xfc;
         pl[1..5].copy_from_slice(&addr4(addr));
         pl[5] = (buffer_write_bytes & 0xff) as u8;
         pl[6] = ((buffer_write_bytes >> 8) & 0xff) as u8;
         pl[7..].copy_from_slice(data);
-        if self.send_package(&pl).is_err() {
-            return false;
-        }
-        self.read_ack()
+        let ok = if self.send_package(&pl).is_err() {
+            false
+        } else {
+            self.read_ack()
+        };
+        self.response_timeout = save;
+        ok
     }
 
     // ---------------- 存档 RAM（GBA 侧 0xE0000000 区）----------------

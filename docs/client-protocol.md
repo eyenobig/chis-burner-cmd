@@ -14,7 +14,7 @@
 
 | `type` | Purpose | Main fields |
 | --- | --- | --- |
-| `port` | One detected burner | `port`, `vid`, `pid`, `burner`, `open`, `name` |
+| `port` | One detected burner | `port`, `vid`, `pid`, `burner`, `open`, `name`, optional `serial` |
 | `summary` | Command summary | `command`, `burners` |
 | `selected` | Persisted port selection | `port` |
 | `info` | Cartridge and flash information | `port`, `present`, `kind`, flash geometry, ROM metadata |

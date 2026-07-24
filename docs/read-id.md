@@ -18,7 +18,7 @@ cfb info --json          # NDJSON 事件（给 Electron/Tauri 客户端）
 cfb --lang en info       # 英文
 ```
 
-端口解析优先级：`--port` > `cfb select` 记住的(仍在线) > 自动第一个烧录器。
+端口解析优先级：`--port` > `cfb select` 记住的(仍在线) > 仅一台时自动；多台未选择则失败。
 
 ## 输出
 

@@ -64,6 +64,7 @@
   "resolve.using_saved": "Usando porta memorizada {port}",
   "resolve.auto": "Porta {port} selecionada automaticamente",
   "resolve.saved_absent": "A porta memorizada {port} está atualmente offline.",
+  "resolve.need_select": "Vários gravadores detectados; execute cfb select --port <porta> primeiro.",
   "err.no_burner": "Nenhum gravador detectado (VID_{vid} / PID_{pid}).",
   "todo.with_port": "{cmd} ainda não implementado (usaria a porta {port}; camada de protocolo a portar do C#).",
   "todo.no_port": "{cmd} ainda não implementado, e nenhum gravador detectado.",

@@ -12,6 +12,8 @@ pub struct PortInfo {
     pub name: String,
     pub vid: Option<u16>,
     pub pid: Option<u16>,
+    /// USB 序列号（同 VID/PID 多机时用于区分；非 USB 或读不到则为 None）。
+    pub serial: Option<String>,
 }
 
 impl PortInfo {

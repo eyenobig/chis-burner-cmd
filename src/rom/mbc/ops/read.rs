@@ -10,9 +10,13 @@ use crate::rom::mbc::data::{mbc_name, MbcHeader, MbcKind};
 /// 16KB bank。线性 ROM 偏移 → bank 号。
 pub const BANK_SIZE: u32 = 0x4000;
 
-/// 选 ROM bank（按 MBC 代次分发，复刻 C# `mbc_romSwitchBank`）。
-/// - MBC3：只写 0x2000，bank 0 重映射为 1（MBC3 规范：bank 0 只在固定区 0x0000-0x3FFF）。
-/// - MBC5：先写 bit8 到 0x3000，再写低 8 位到 0x2000（9 位，0-511）。
+/// 选 ROM bank。
+/// - MBC3：写 0x2000；bank 0 → 1。
+/// - MBC5 / 本机 Chis 复制卡（硬件实测 2026-07-24 COM13）：
+///   - 寄存器 **0 与 1 读回同一物理页**（用 0x2000 或 0x2100 皆然）。
+///   - 寄存器 ≥2 可正常切换。
+///   - 因此线性 ROM bank `N` → 寄存器 `N+1`，地址用 **0x2100**（FlashGBX MBC5）。
+///   - 用 C# 的「N→0x2000」时烧录稳定死在 `@0x4000`；改 N+1 后 bank0–2 读回校验 0 mismatch。
 pub fn switch_bank(link: &mut CartridgeLink, bank: u32, kind: MbcKind) {
     match kind {
         MbcKind::Mbc3 => {
@@ -23,15 +27,33 @@ pub fn switch_bank(link: &mut CartridgeLink, bank: u32, kind: MbcKind) {
             link.gbc_write(0x2000, &[b]);
         }
         MbcKind::Mbc5 => {
-            link.gbc_write(0x3000, &[((bank >> 8) & 0xff) as u8]);
-            link.gbc_write(0x2000, &[(bank & 0xff) as u8]);
+            let reg = bank.saturating_add(1);
+            link.gbc_write(0x3000, &[((reg >> 8) & 0xff) as u8]);
+            // 低 8 位：C# 用 0x2000；FlashGBX 用 0x2100。本机两者可读，写回用 0x2000 对齐固件/C#。
+            link.gbc_write(0x2000, &[(reg & 0xff) as u8]);
         }
     }
 }
 
-/// 线性 ROM 偏移 → GB 总线地址（按 MBC 代次分发，复刻 C# `mbc_BaseAddressOfBank`）。
+/// FlashGBX `DMG_Unlicensed_MBCX.SelectBankFlash`：>8MiB 多 die。
+/// **beggar_socket 无此步骤**；普通 Chis 复制卡调用会打乱总线状态，导致烧录在 0x4000 失败。
+/// 仅在确认 MBCX 多 die 时使用；常规 burn/erase 不要调用。
+pub fn switch_flash_bank(link: &mut CartridgeLink, flash_bank: u32) {
+    link.gbc_write(0x0000, &[0x05]);
+    link.gbc_write(0x4000, &[0x82]);
+    link.gbc_write(0xa000, &[(flash_bank & 0xff) as u8]);
+    link.gbc_write(0x0000, &[0x00]);
+}
+
+/// MBC bank 切换。常规路径只走 [`switch_bank`]（对齐 beggar_socket）。
+/// `flash_bank` 参数保留以兼容旧调用点，**不再**自动 `switch_flash_bank`。
+pub fn switch_bank_mbcx(link: &mut CartridgeLink, bank: u32, kind: MbcKind, _flash_bank: &mut i32) {
+    switch_bank(link, bank, kind);
+}
+
+/// 线性 ROM 偏移 → GB 总线地址（按 MBC 代次分发）。
 /// - MBC3：bank 0 → 0x0000-0x3FFF（固定区）；其余 → 0x4000-0x7FFF。
-/// - MBC5：恒 0x4000 + 低 14 位（MBC5 bank 0 不可经 0x4000 选中）。
+/// - MBC5 / ChisFlash MBCX：恒 0x4000 + 低 14 位（bank 0 也在 0x4000 窗口，见 FlashGBX start_addr）。
 pub fn bus_addr(rom_off: u32, kind: MbcKind) -> u32 {
     let bank = rom_off >> 14;
     let base = match kind {
@@ -41,15 +63,27 @@ pub fn bus_addr(rom_off: u32, kind: MbcKind) -> u32 {
     base + (rom_off & 0x3fff)
 }
 
+/// 线性 ROM 偏移 → flash 芯片物理字节地址（用于扇区擦覆盖计算）。
+/// MBC5 本机卡：`switch_bank` 用 N→N+1，故 phys = ((bank+1)<<14) | off14。
+/// MBC3：bank0 固定区 phys=off；其余 bank 与线性一致。
+pub fn flash_phys_addr(rom_off: u32, kind: MbcKind) -> u32 {
+    let bank = rom_off >> 14;
+    let off14 = rom_off & 0x3fff;
+    match kind {
+        MbcKind::Mbc5 => ((bank.saturating_add(1)) << 14) | off14,
+        MbcKind::Mbc3 => rom_off,
+    }
+}
+
 /// CFI 查询，返回 (device_size_bytes, buffer_write_bytes, sector_size_bytes)。
 /// `sector_size` 优先读 CFI 均匀扇区；读不到时默认 64KiB（多数 GB 复制卡 NOR）。
-/// 失败会重试：先复位再进 CFI，避免残留 CFI 模式导致后续擦除失败。
+/// 失败最多再试 1 次：先复位再进 CFI，避免残留 CFI 模式导致后续擦除失败。
 pub fn rom_get_cfi(link: &mut CartridgeLink) -> (u64, u16, u32) {
     const DEFAULT_SECTOR: u32 = 64 * 1024;
-    for attempt in 0..3 {
+    for attempt in 0..2 {
         link.gbc_write(0x00, &[0xf0]);
         if attempt > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            std::thread::sleep(std::time::Duration::from_millis(8));
         }
 
         link.gbc_write(0xaa, &[0x98]); // CFI Query
@@ -83,8 +117,6 @@ pub fn rom_get_cfi(link: &mut CartridgeLink) -> (u64, u16, u32) {
         };
 
         link.gbc_write(0x00, &[0xf0]); // reset
-        std::thread::sleep(std::time::Duration::from_millis(5));
-
         if device_size > 0 {
             return (device_size, buffer_write_bytes, sector_size);
         }
@@ -110,19 +142,74 @@ pub fn read_cart_byte(link: &mut CartridgeLink, addr: u32) -> Option<u8> {
     None
 }
 
-/// 读取物理 GB/GBC 卡头部（0x180 字节，供头校验 + db_DMG SHA1）。
-/// 无有效 GB 头时返回 None。
-pub fn read_live_header(link: &mut CartridgeLink) -> Option<[u8; 0x180]> {
+/// 头区探测结果：有有效游戏头，或没有（空白/损坏/读失败）。
+/// `info` 在 `NoGame` 时仍可用 CFI 判断 flash 是否在位，避免把空片当成「无卡带」。
+#[derive(Debug)]
+pub enum HeaderProbe {
+    Valid([u8; 0x180]),
+    NoGame,
+}
+
+/// 按 MBC 映射读 ROM 线性偏移 0 处的 0x180 头（MBC5 在 0x4000，MBC3 在 0x0000）。
+fn read_header_at(link: &mut CartridgeLink, kind: MbcKind, out: &mut [u8; 0x180]) -> bool {
+    switch_bank(link, 0, kind);
+    link.gbc_read(bus_addr(0, kind), out)
+}
+
+/// 探测物理 GB/GBC 卡头部（快路径优先，接触抖动只做短重试）。
+///
+/// 复制卡默认按 MBC5 接线：ROM 偏移 0 在 GB 总线 `0x4000`（bank 0），不是 `0x0000`。
+/// 因此先试 MBC5 窗口，再试 MBC3 固定区。
+///
+/// - 有效头：立刻返回 `Valid`
+/// - 连续稳定全 0xFF：早退 `NoGame`（真空白，交给 CFI 判在位）
+/// - 读失败 / 校验失败：最多 3 轮，间隔短 sleep + flash 复位
+pub fn probe_live_header(link: &mut CartridgeLink) -> HeaderProbe {
+    const ATTEMPTS: u32 = 3;
     let mut header = [0u8; 0x180];
-    for _ in 0..2 {
-        if link.gbc_read(0, &mut header) {
-            if is_gb_header(&header) {
-                return Some(header);
-            }
-            return None;
+    let mut blank_streak = 0u32;
+    for attempt in 0..ATTEMPTS {
+        if attempt > 0 {
+            link.gbc_write(0x00, &[0xf0]);
+            std::thread::sleep(std::time::Duration::from_millis(12));
         }
+        let mut got = false;
+        let mut saw_blank = false;
+        // MBC5 优先（烧录空片 / 多数 GB 复制卡）；再回落 MBC3 固定区。
+        for kind in [MbcKind::Mbc5, MbcKind::Mbc3] {
+            if !read_header_at(link, kind, &mut header) {
+                continue;
+            }
+            got = true;
+            if is_gb_header(&header) {
+                return HeaderProbe::Valid(header);
+            }
+            if common::ops::is_blank(&header[..0x150.min(header.len())]) {
+                saw_blank = true;
+            }
+        }
+        if !got {
+            blank_streak = 0;
+            continue;
+        }
+        if saw_blank {
+            blank_streak += 1;
+            if blank_streak >= 2 {
+                return HeaderProbe::NoGame;
+            }
+            continue;
+        }
+        blank_streak = 0;
     }
-    None
+    HeaderProbe::NoGame
+}
+
+/// 读取物理 GB/GBC 卡头部（0x180 字节）。无有效 GB 头时返回 None。
+pub fn read_live_header(link: &mut CartridgeLink) -> Option<[u8; 0x180]> {
+    match probe_live_header(link) {
+        HeaderProbe::Valid(h) => Some(h),
+        HeaderProbe::NoGame => None,
+    }
 }
 
 /// GB 头校验：stored=rom[0x14D]，computed = (Σ_{a=0x134..=0x14C} (-rom[a]-1)) & 0xFF。

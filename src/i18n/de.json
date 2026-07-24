@@ -64,6 +64,7 @@
   "resolve.using_saved": "Verwende gemerkten Port {port}",
   "resolve.auto": "Port {port} automatisch gewählt",
   "resolve.saved_absent": "Gemerkter Port {port} ist derzeit offline.",
+  "resolve.need_select": "Mehrere Brenner erkannt; zuerst cfb select --port <Port> ausführen.",
   "err.no_burner": "Kein Brenner erkannt (VID_{vid} / PID_{pid}).",
   "todo.with_port": "{cmd} noch nicht implementiert (würde Port {port} nutzen; Protokollschicht noch aus C# zu portieren).",
   "todo.no_port": "{cmd} noch nicht implementiert, und kein Brenner erkannt.",

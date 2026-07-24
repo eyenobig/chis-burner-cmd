@@ -67,6 +67,7 @@
   "resolve.using_saved": "使用已记住的端口 {port}",
   "resolve.auto": "自动选择端口 {port}",
   "resolve.saved_absent": "已记住的端口 {port} 当前不在线。",
+  "resolve.need_select": "检测到多台烧录器，请先用 cfb select --port <端口> 指定目标。",
   "err.no_burner": "未检测到烧录器 (VID_{vid} / PID_{pid})。",
   "todo.with_port": "{cmd} 尚未实现（将使用端口 {port}，协议层待从 C# 移植）。",
   "todo.no_port": "{cmd} 尚未实现，且当前未检测到烧录器。",

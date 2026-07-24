@@ -8,7 +8,7 @@
 use std::fs::File;
 use std::io::Write;
 
-use super::read::{bus_addr, switch_bank};
+use super::read::{bus_addr, switch_bank_mbcx};
 use crate::cartridge_link::CartridgeLink;
 use crate::rom::mbc::data::MbcKind;
 
@@ -25,6 +25,7 @@ pub fn dump(
     let mut f = File::create(path)?;
     let mut read = 0u64;
     let mut current_bank: i64 = -1;
+    let mut flash_bank: i32 = -1;
     let mut buf = vec![0u8; PACKET];
     while read < len {
         let n = ((len - read) as usize).min(PACKET);
@@ -32,13 +33,14 @@ pub fn dump(
         let bank = (rom_off >> 14) as i64;
         if bank != current_bank {
             current_bank = bank;
-            switch_bank(link, bank as u32, kind);
+            switch_bank_mbcx(link, bank as u32, kind, &mut flash_bank);
         }
         let cartridge_addr = bus_addr(rom_off, kind);
         let b = &mut buf[..n];
         if !link.gbc_read(cartridge_addr, b) {
-            let _ = link.reconnect();
-            switch_bank(link, bank as u32, kind);
+            let _ = link.reconnect_as(true);
+            flash_bank = -1;
+            switch_bank_mbcx(link, bank as u32, kind, &mut flash_bank);
             current_bank = bank;
             continue;
         }

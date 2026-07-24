@@ -64,6 +64,7 @@
   "resolve.using_saved": "Utilisation du port mémorisé {port}",
   "resolve.auto": "Port {port} auto-sélectionné",
   "resolve.saved_absent": "Le port mémorisé {port} est actuellement hors ligne.",
+  "resolve.need_select": "Plusieurs graveurs détectés ; lancez d'abord cfb select --port <port>.",
   "err.no_burner": "Aucun graveur détecté (VID_{vid} / PID_{pid}).",
   "todo.with_port": "{cmd} n'est pas encore implémenté (utiliserait le port {port} ; couche protocole à porter depuis C#).",
   "todo.no_port": "{cmd} n'est pas encore implémenté, et aucun graveur n'est détecté.",

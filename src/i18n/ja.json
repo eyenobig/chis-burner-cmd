@@ -64,6 +64,7 @@
   "resolve.using_saved": "記憶したポート {port} を使用",
   "resolve.auto": "ポート {port} を自動選択",
   "resolve.saved_absent": "記憶したポート {port} は現在オフライン。",
+  "resolve.need_select": "複数の書き込み器を検出。先に cfb select --port <ポート> を実行してください。",
   "err.no_burner": "書き込み器を検出できません (VID_{vid} / PID_{pid})。",
   "todo.with_port": "{cmd} は未実装（ポート {port} を使用予定、プロトコル層は C# から移植予定）。",
   "todo.no_port": "{cmd} は未実装、かつ書き込み器を検出できません。",

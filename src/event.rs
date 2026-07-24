@@ -31,6 +31,9 @@ pub enum Event {
         /// 当前是否可打开（false=被占用/不可用）。
         open: bool,
         name: String,
+        /// USB 序列号；读不到时为 null（兼容字段，客户端可忽略）。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        serial: Option<String>,
     },
 
     /// 命令结束时的汇总（detect 只统计烧录器数量）。
@@ -80,7 +83,9 @@ pub enum Event {
     /// 出错（未实现、未知命令、设备异常等）。客户端可据此提示。
     Error { command: String, message: String },
 
-    /// burn/erase/dump：进度（字节）。
+    /// burn/erase/dump：进度。
+    /// - 写入/导出：`done`/`total` 为字节。
+    /// - 扇区擦除（`erase_range_logged`）：`done`/`total` 为扇区数（含开局 `0/total`）。
     Progress { done: u64, total: u64 },
 
     /// burn/erase/dump：阶段性日志。
@@ -132,9 +137,11 @@ pub enum Event {
     },
 }
 
-/// 输出一行 NDJSON。
+/// 输出一行 NDJSON（立即 flush，保证长耗时扇区擦除期间进度能实时到达客户端）。
 pub fn emit(ev: &Event) {
+    use std::io::Write;
     if let Ok(s) = serde_json::to_string(ev) {
         println!("{s}");
+        let _ = std::io::stdout().flush();
     }
 }
