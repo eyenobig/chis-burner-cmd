@@ -216,3 +216,145 @@ fn ok(bytes: u64, t0: Instant) -> SaveResult {
 fn fail(bytes: u64, t0: Instant) -> SaveResult {
     SaveResult { success: false, bytes, mismatch_bytes: 0, seconds: t0.elapsed().as_secs_f64() }
 }
+
+/// 读 ROM 跨度 `[offset, offset+len)`（线性 ROM 偏移，按 MBC bank 切换）。
+fn read_rom_span(
+    link: &mut CartridgeLink,
+    kind: MbcKind,
+    offset: u64,
+    len: u64,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Option<Vec<u8>> {
+    use super::read::{bus_addr, switch_bank};
+    let mut out = vec![0u8; len as usize];
+    let mut read = 0u64;
+    let mut current_bank: i64 = -1;
+    let mut buf = vec![0u8; PACKET];
+    while read < len {
+        let n = ((len - read) as usize).min(PACKET);
+        let rom_off = (offset + read) as u32;
+        let bank = (rom_off >> 14) as i64;
+        if bank != current_bank {
+            current_bank = bank;
+            switch_bank(link, bank as u32, kind);
+        }
+        let cartridge_addr = bus_addr(rom_off, kind);
+        let b = &mut buf[..n];
+        if !link.gbc_read(cartridge_addr, b) {
+            let _ = link.reconnect();
+            crate::device::power(link, crate::device::data::Voltage::V5);
+            link.gbc_warm_up();
+            switch_bank(link, bank as u32, kind);
+            continue;
+        }
+        out[read as usize..read as usize + n].copy_from_slice(b);
+        read += n as u64;
+        progress(read, len);
+    }
+    Some(out)
+}
+
+/// 免电存档 dump：按 `db_DMG_bl` 的 offset/size/layout 从 ROM flash 抽出 .sav。
+pub fn dump_batteryless(
+    link: &mut CartridgeLink,
+    kind: MbcKind,
+    cfg: &crate::gamedb::BatterylessConfig,
+    path: &str,
+    log: &mut dyn FnMut(&str),
+    progress: &mut dyn FnMut(u64, u64),
+) -> SaveResult {
+    let t0 = Instant::now();
+    log(&crate::i18n::tf(
+        "save.found",
+        &[
+            ("off", &format!("0x{:08X}", cfg.offset)),
+            ("size", &cfg.size.to_string()),
+        ],
+    ));
+    log(&format!(
+        "免电布局 layout={} rom_span={}",
+        cfg.layout,
+        cfg.rom_span()
+    ));
+    let Some(span) = read_rom_span(link, kind, cfg.offset, cfg.rom_span(), progress) else {
+        return fail(0, t0);
+    };
+    let save = crate::gamedb::extract_batteryless_save(&span, cfg);
+    if std::fs::write(path, &save).is_err() {
+        log(&crate::i18n::t("save.write_fail"));
+        return fail(0, t0);
+    }
+    ok(save.len() as u64, t0)
+}
+
+/// 免电存档 write：把 .sav 按 layout 展开后擦扇区并烧进 ROM flash。
+pub fn write_batteryless(
+    link: &mut CartridgeLink,
+    kind: MbcKind,
+    cfg: &crate::gamedb::BatterylessConfig,
+    data: &[u8],
+    log: &mut dyn FnMut(&str),
+    progress: &mut dyn FnMut(u64, u64),
+) -> SaveResult {
+    let t0 = Instant::now();
+    log(&crate::i18n::tf(
+        "save.found",
+        &[
+            ("off", &format!("0x{:08X}", cfg.offset)),
+            ("size", &cfg.size.to_string()),
+        ],
+    ));
+    let image = crate::gamedb::expand_batteryless_image(data, cfg);
+    let end = cfg.offset + image.len() as u64;
+    log("擦除免电存档区 ...");
+    let sector_size = super::read::rom_get_cfi(link).2;
+    if !super::delete::erase_range(link, kind, cfg.offset, end, sector_size) {
+        log("擦除失败");
+        return fail(0, t0);
+    }
+    log("写入免电存档 ...");
+    if let Some(bad) = super::write::program_range(link, kind, &image, cfg.offset, progress) {
+        log(&format!("写入失败 @ 0x{bad:08X}"));
+        return fail(bad.saturating_sub(cfg.offset), t0);
+    }
+    ok(cfg.size.min(data.len() as u64), t0)
+}
+
+/// 免电存档 verify：读出并与 .sav 比对。
+pub fn verify_batteryless(
+    link: &mut CartridgeLink,
+    kind: MbcKind,
+    cfg: &crate::gamedb::BatterylessConfig,
+    data: &[u8],
+    log: &mut dyn FnMut(&str),
+    progress: &mut dyn FnMut(u64, u64),
+) -> SaveResult {
+    let t0 = Instant::now();
+    let Some(span) = read_rom_span(link, kind, cfg.offset, cfg.rom_span(), progress) else {
+        return fail(0, t0);
+    };
+    let got = crate::gamedb::extract_batteryless_save(&span, cfg);
+    let n = data.len().min(got.len()).min(cfg.size as usize);
+    let mut mismatch = 0u32;
+    for i in 0..n {
+        if data[i] != got[i] {
+            mismatch += 1;
+            if mismatch <= 32 {
+                log(&crate::i18n::tf(
+                    "save.verify_mismatch",
+                    &[
+                        ("addr", &format!("0x{:08X}", i)),
+                        ("exp", &format!("{:02X}", data[i])),
+                        ("got", &format!("{:02X}", got[i])),
+                    ],
+                ));
+            }
+        }
+    }
+    SaveResult {
+        success: mismatch == 0,
+        bytes: n as u64,
+        mismatch_bytes: mismatch,
+        seconds: t0.elapsed().as_secs_f64(),
+    }
+}

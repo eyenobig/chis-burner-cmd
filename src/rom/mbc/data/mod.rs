@@ -5,7 +5,11 @@ use crate::event::RomChecksum;
 
 /// GB/GBC ROM 头解析结果。
 pub struct MbcHeader {
-    pub title: String,    // 0x134..0x142
+    pub title: String,    // 0x134..（CGB 可能已拆掉末尾 4 字 game code）
+    /// GBC 标题区拆出的 4 字母代号（如 `AAUE`）；无则 None（可由 db_DMG 补全为 `DMG-APAE`）。
+    pub game_code: Option<String>,
+    /// 头 0x14C 版本号（flashGBX 的 Revision）。
+    pub revision: u8,
     pub cgb_flag: u8,     // 0x143
     pub cartridge_type: u8,    // 0x147（maptype 原始字节）
     pub mbc_name: &'static str,

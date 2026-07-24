@@ -14,6 +14,7 @@
 //!     save-dump   --out <f> [--mbc] [--type sram|flash|fram|batteryless] [--len N]  导出存档
 //!     save-write  --file <f> [--mbc] [--type ...]  写入存档
 //!     save-verify --file <f> [--mbc] [--type ...]  校验存档
+//!     save-erase  [--mbc] [--type ...] [--len N]   擦除存档（填 0xFF）
 //!     help
 //!
 //! 全局：`--lang zh-CN|en`（会被记住）；`--json` 输出 NDJSON 事件流。
@@ -143,6 +144,11 @@ fn main() -> ExitCode {
             Some(f) => rom::cmd_save_verify(json, port, &f, mbc, opt_value(&args, "--type")),
             None => arg_required(json, "save-verify", "op.no_save"),
         },
+        "save-erase" => {
+            let typ = opt_value(&args, "--type");
+            let len = opt_value(&args, "--len").and_then(|s| s.parse::<u64>().ok());
+            rom::cmd_save_erase(json, port, mbc, typ, len)
+        }
         "profile" => profile::cmd_profile(json, pos.get(1).copied()),
         "" | "help" | "-h" | "--help" => {
             println!("{}", i18n::t("usage"));

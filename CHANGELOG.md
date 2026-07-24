@@ -18,12 +18,20 @@
 
 ## [Unreleased]
 
+## [v0.3.0] - 2026-07-24
+
 ### 变更
 
 - **授权由 MIT 改为 GPL-3.0**：因 `chis-burner-rule` 子库（flashGBX 派生）是 GPL-3.0，其 profile 数据被 `build.rs` 编进 cfb 二进制后，整体按 GPL 传染；下游客户端 beggar_chis 打包 cfb 二进制后亦 GPL。统一 GPL-3.0 消除授权矛盾（cfb 复刻的 beggar_socket 为 WTFPL，允许 relicensing）。
+- **烧录 / 擦除优先按卡上实读 MBC 代次寻址**：`burn`/`erase` 不再只信 ROM 头 0x147 的 mapper 类型，改为优先用卡上实读到的类型选 bank 切换/地址映射，读不到才回退 ROM 头声明的类型（默认按 MBC5 处理空白/噪声片），避免烧录器 flash 卡与 ROM 头 mapper 不一致导致高位 bank 擦除/烧录失败。
+- **`rom_get_cfi` 增加复位重试**：CFI 查询前后显式复位 flash，最多重试 3 次，同时探测均匀扇区大小，减少「容量读回 0」的偶发失败。
 
 ### 新增
 
+- **`cfb erase` 支持分段进度**：按 CFI 探测到的扇区大小逐个擦除并汇报 `progress`/`log` 事件（容量未知时回落整片擦除，行为与之前一致，零回归）。GBA/MBC 两侧均已支持。
+- **GB/GBC 卡带识别扩展**：`info` 事件新增 `cartridge_type`/`mbc_name`（卡带类型原始字节 + 对应 MBC 代次名，如 `MBC5`），以及免电存档（batteryless，靠 `db_DMG_bl` 按标题查表）的 ROM 内偏移/大小/布局字段，供客户端展示。
+- **`cfb save-erase [--mbc] [--type T] [--len N]`**：擦除存档（按类型写满 `0xFF`；FLASH 路径会先整片擦除）。与 `save-dump`/`save-write`/`save-verify` 同一套存档类型与进度事件。
+- **`CFB_RULE_DIR` 构建期环境变量**：覆盖内置的 `vendor/chis-burner-rule` 数据源目录，供下游客户端（如 beggar_chis）指定本地 rule 版本重新编译 sidecar，而不必依赖固定的子模块路径。
 - **flash 芯片 profile 子库**：把 [flashGBX](https://github.com/lesserkuma/FlashGBX)（Lesserkuma，GPL-3.0）的 154 个 flash 芯片定义转换成 cfb profile，作为独立子库 [chis-burner-rule](https://github.com/eyenobig/chis-burner-rule)（git submodule 挂 `vendor/`）。`build.rs` 在编译期把子库 + `src/profiles/` 共 **156 个** profile 编进二进制——无需配置即覆盖 S29GL / MX29 / AM29 / M29W / SST39 / 28F / insideGadgets 系等常见 GBA/GB 可写卡带。CI 加 `submodules: true`。
 - **flashGBX 风格 flash profile**：把烧录流程里硬编码的 flash 命令序列（reset/read_id/read_cfi/sector_erase/chip_erase）外部化为 JSON，按 Autoselect ID 前 4 字节匹配芯片。内置 S29GL（GBA，含 Macronix+Spansion ID）与 MBC 默认两套；外部 `~/.cfb/profiles/*.json` 可覆盖/补充，格式兼容 flashGBX 的 `fc_*.txt`（可直接拷来用）。`cfb profile list/path` 子命令管理与诊断。**未命中走原硬编码，零回归。** 详见 [docs/profiles.md](docs/profiles.md)。
 

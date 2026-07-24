@@ -55,6 +55,7 @@ cargo run -- --lang en detect
 | `save-dump --out <f> [--mbc] [--type T] [--len N]` | 导出存档（GBA：SRAM/FLASH/FRAM/免电；MBC：SRAM/FRAM） | ✅ 已验证（GBA SRAM） |
 | `save-write --file <f> [--mbc] [--type T]` | 写入存档（FLASH 先整片擦除；免电擦覆盖扇区后 rom_program） | ✅ 已验证（GBA SRAM） |
 | `save-verify --file <f> [--mbc] [--type T]` | 校验存档（逐字节比对） | ✅ 已验证（GBA SRAM） |
+| `save-erase [--mbc] [--type T] [--len N]` | 擦除存档（填 0xFF；FLASH 写前整片擦除） | ⚠️ 待硬件验证 |
 | `profile [list\|path]` | 列出/查看 flash profile（芯片命令序列配置，flashGBX 风格，[文档](docs/profiles.md)） | ✅ 已验证 |
 | `help` | 显示帮助 | ✅ |
 

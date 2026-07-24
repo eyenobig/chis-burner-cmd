@@ -99,8 +99,8 @@ pub fn parse_header(header: &[u8]) -> GbaHeader {
     let revision = header.get(0xBC).copied().unwrap_or(0);
     let checksum = header_checksum(header);
     let rtc = has_rtc(&game_code);
-    // 按 header SHA1 查游戏名数据库（复刻 flashGBX）；查不到回退 ROM 标题。
-    let game_name = crate::gamedb::lookup_game_name(header).unwrap_or_else(|| rom_title.clone());
+    // GameName 与 RomTitle 同源（头内 0xA0..0xAC）；友好名由客户端 FlashRom API 另取。
+    let game_name = rom_title.clone();
 
     GbaHeader {
         rom_title,

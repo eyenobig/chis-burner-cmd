@@ -44,17 +44,19 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
     device::power(&mut link, device::voltage_for(if mbc { CartridgeKind::GbMbc } else { CartridgeKind::Gba }));
     if mbc {
         link.gbc_warm_up();
-        let header = mbc::ops::read::read_live_header(&mut link);
+        let raw = mbc::ops::read::read_live_header(&mut link);
         let (capacity, buffer) = mbc::ops::read::rom_get_size(&mut link);
         device::power_off(&mut link);
-        let Some(header) = header else {
-            emit_or_eprint(json, &i18n::t("info.err_read"));
+        let Some(raw) = raw else {
+            // 读失败或无有效 GB 头（含：空白片 / 错电压下的 GBA 卡）→ 勿 emit 假 info
+            emit_or_eprint(json, &i18n::t("info.no_cartridge"));
             return ExitCode::from(3);
         };
         if json {
-            emit_mbc_info(&port, capacity, buffer, &header);
+            emit_mbc_info(&port, capacity, buffer, &raw);
         } else {
-            print_mbc_human(Some(&port), capacity, Some(buffer), &header);
+            let header = mbc::ops::read::parse_header(&raw);
+            print_mbc_human(Some(&port), capacity, Some(buffer), &header, enrich_mbc(&raw, &header));
         }
         return ExitCode::SUCCESS;
     }
@@ -91,9 +93,10 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
     };
 
     if json {
-        emit_gba_info(&port, kind.as_str(), &flash.id_hex(), flash.device_size, flash.buffer_write_bytes, flash.sector_size, flash.sector_count, game.as_ref());
+        emit_gba_info(&port, kind.as_str(), &flash.id_hex(), flash.device_size, flash.buffer_write_bytes, flash.sector_size, flash.sector_count, game.as_ref(), header.as_ref().map(|h| h.as_slice()));
     } else {
-        print_human(&port, kind, &flash, game.as_ref());
+        let friendly = header.as_ref().and_then(|h| crate::gamedb::lookup_agb(h)).map(|e| e.gn);
+        print_human(&port, kind, &flash, game.as_ref(), friendly.as_deref());
     }
     ExitCode::SUCCESS
 }
@@ -101,6 +104,7 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
 /// 发出一条 GBA 侧 `info` 事件（`cmd_info` 实时读 / `cmd_rom_info` 离线解析共用）。
 /// `kind` 实时读时可能是 `"unknown"`（flash 在位但头部未识别）；离线解析恒 `"gba"`。
 /// `game` 为 `None` 时游戏字段全部为 `null`。
+/// `raw` 用于 header SHA1 查 `db_AGB`（友好名）；不足时回退 `game.rom_title`。
 fn emit_gba_info(
     port: &str,
     kind: &str,
@@ -110,7 +114,13 @@ fn emit_gba_info(
     sector_size: u32,
     sector_count: u32,
     game: Option<&GbaHeader>,
+    raw: Option<&[u8]>,
 ) {
+    let db = raw.and_then(crate::gamedb::lookup_agb);
+    let game_name = db
+        .as_ref()
+        .map(|e| e.gn.clone())
+        .or_else(|| game.map(|g| g.game_name.clone()));
     emit(&Event::Info {
         port: port.to_string(),
         present: true,
@@ -120,18 +130,52 @@ fn emit_gba_info(
         buffer_write_bytes,
         sector_size,
         sector_count,
-        game_name: game.map(|g| g.game_name.clone()),
+        game_name,
         rom_title: game.map(|g| g.rom_title.clone()),
         game_code: game.map(|g| g.game_code.clone()),
         revision: game.map(|g| g.revision),
         rom_checksum: game.map(|g| g.checksum.clone()),
         rtc: game.map(|g| g.rtc),
+        save_size_bytes: None, // GBA SRAM 大小需探测，info 阶段不读
+        cartridge_type: None, // GBA 无此概念，游戏代号走 game_code
+        mbc_name: None,
+        batteryless_offset: None,
+        batteryless_size: None,
+        batteryless_layout: None,
     });
+}
+
+/// db_DMG / 头解析合并后的友好字段（人类可读与 JSON 共用）。
+struct MbcEnrich {
+    game_name: String,
+    game_code: Option<String>,
+    batteryless: Option<crate::gamedb::BatterylessConfig>,
+}
+
+fn enrich_mbc(raw: &[u8], h: &MbcHeader) -> MbcEnrich {
+    let db = crate::gamedb::lookup_dmg(raw);
+    let game_name = db
+        .as_ref()
+        .map(|e| e.gn.clone())
+        .unwrap_or_else(|| h.title.clone());
+    // flashGBX：优先 db.gc（如 DMG-APAE）；否则用标题拆出的 4 字母代号。
+    let game_code = db
+        .and_then(|e| e.gc.filter(|s| !s.is_empty()))
+        .or_else(|| h.game_code.clone());
+    let batteryless = crate::gamedb::lookup_dmg_batteryless(raw);
+    MbcEnrich {
+        game_name,
+        game_code,
+        batteryless,
+    }
 }
 
 /// 发出一条 `gb_mbc` 类 `info` 事件（`cmd_info` 的 live 读 / `cmd_rom_info` 离线解析共用）。
 /// `capacity`/`buffer` 传 0 表示离线场景（无 flash CFI 数据），回落用头部 `rom_size_bytes`。
-fn emit_mbc_info(port: &str, capacity: u64, buffer: u16, h: &MbcHeader) {
+/// `raw` 须至少 0x150（查库最好 0x180）。
+fn emit_mbc_info(port: &str, capacity: u64, buffer: u16, raw: &[u8]) {
+    let h = mbc::ops::read::parse_header(raw);
+    let en = enrich_mbc(raw, &h);
     emit(&Event::Info {
         port: port.to_string(),
         present: true,
@@ -141,12 +185,19 @@ fn emit_mbc_info(port: &str, capacity: u64, buffer: u16, h: &MbcHeader) {
         buffer_write_bytes: buffer as u32,
         sector_size: 0,
         sector_count: 0,
-        game_name: Some(h.title.clone()),
+        game_name: Some(en.game_name),
         rom_title: Some(h.title.clone()),
-        game_code: None,
-        revision: None,
+        game_code: en.game_code,
+        revision: Some(h.revision),
         rom_checksum: Some(h.header_checksum.clone()),
         rtc: Some(h.rtc),
+        save_size_bytes: if h.ram_size_bytes > 0 { Some(h.ram_size_bytes) } else { None },
+        // GB/GBC 没有 Game Code 时，卡带类型（maptype）是最接近的"身份代号"。
+        cartridge_type: Some(h.cartridge_type),
+        mbc_name: Some(h.mbc_name.to_string()),
+        batteryless_offset: en.batteryless.as_ref().map(|b| b.offset),
+        batteryless_size: en.batteryless.as_ref().map(|b| b.size),
+        batteryless_layout: en.batteryless.as_ref().map(|b| b.layout),
     });
 }
 
@@ -165,7 +216,7 @@ fn yn(b: bool) -> String {
     i18n::t(if b { "common.yes" } else { "common.no" })
 }
 
-fn print_human(port: &str, kind: CartridgeKind, flash: &FlashInfo, game: Option<&GbaHeader>) {
+fn print_human(port: &str, kind: CartridgeKind, flash: &FlashInfo, game: Option<&GbaHeader>, friendly_name: Option<&str>) {
     let kind_label = i18n::t(match kind {
         CartridgeKind::Gba => "kind.gba",
         CartridgeKind::GbMbc => "kind.gb_mbc",
@@ -189,7 +240,8 @@ fn print_human(port: &str, kind: CartridgeKind, flash: &FlashInfo, game: Option<
     match game {
         Some(g) => {
             println!("{}", i18n::t("info.sec_game"));
-            println!("{}", i18n::tf("info.game_name", &[("name", &g.game_name)]));
+            let name = friendly_name.unwrap_or(&g.game_name);
+            println!("{}", i18n::tf("info.game_name", &[("name", name)]));
             println!("{}", i18n::tf("info.rom_title", &[("title", &g.rom_title)]));
             println!("{}", i18n::tf("info.game_code", &[("code", &g.game_code)]));
             println!("{}", i18n::tf("info.revision", &[("rev", &g.revision.to_string())]));
@@ -200,12 +252,17 @@ fn print_human(port: &str, kind: CartridgeKind, flash: &FlashInfo, game: Option<
     }
 }
 
-fn print_mbc_human(port: Option<&str>, capacity: u64, buffer: Option<u16>, h: &MbcHeader) {
+fn print_mbc_human(port: Option<&str>, capacity: u64, buffer: Option<u16>, h: &MbcHeader, en: MbcEnrich) {
     if let Some(port) = port {
         println!("{}", i18n::tf("info.port", &[("port", port)]));
         println!("{}", i18n::tf("info.cartridge", &[("kind", &i18n::t("kind.gb_mbc"))]));
     }
+    println!("{}", i18n::tf("info.game_name", &[("name", &en.game_name)]));
     println!("{}", i18n::tf("info.rom_title", &[("title", &h.title)]));
+    if let Some(code) = &en.game_code {
+        println!("{}", i18n::tf("info.game_code", &[("code", code)]));
+        println!("{}", i18n::tf("info.revision", &[("rev", &h.revision.to_string())]));
+    }
     println!("{}", i18n::tf("info.mbc_type", &[("name", h.mbc_name), ("code", &format!("{:02X}", h.cartridge_type))]));
     println!("{}", i18n::tf("info.cgb", &[("flag", &format!("{:02X}", h.cgb_flag))]));
     let size = if capacity == 0 { h.rom_size_bytes } else { capacity };
@@ -214,6 +271,12 @@ fn print_mbc_human(port: Option<&str>, capacity: u64, buffer: Option<u16>, h: &M
         println!("{}", i18n::tf("info.buffer", &[("n", &n.to_string())]));
     }
     println!("{}", i18n::tf("info.rtc", &[("yn", &yn(h.rtc))]));
+    if let Some(bl) = &en.batteryless {
+        println!(
+            "免电存档: Offset:0x{:X} Size:{} Layout:{}",
+            bl.offset, bl.size, bl.layout
+        );
+    }
     print_checksum(&h.header_checksum);
 }
 
@@ -243,11 +306,12 @@ pub fn cmd_rom_info(json: bool, path: &str) -> ExitCode {
     if bytes.len() >= 0xC0 && gba::ops::is_gba_header(&bytes) {
         let h = gba::ops::parse_header(&bytes);
         if json {
-            emit_gba_info("", "gba", "", bytes.len() as u64, 0, 0, 0, Some(&h));
+            emit_gba_info("", "gba", "", bytes.len() as u64, 0, 0, 0, Some(&h), Some(&bytes));
         } else {
+            let friendly = crate::gamedb::lookup_agb(&bytes).map(|e| e.gn);
             println!("{}", i18n::tf("rom_info.file", &[("path", path)]));
             println!("{}", i18n::tf("info.cartridge", &[("kind", &i18n::t("kind.gba"))]));
-            println!("{}", i18n::tf("info.game_name", &[("name", &h.game_name)]));
+            println!("{}", i18n::tf("info.game_name", &[("name", friendly.as_deref().unwrap_or(&h.game_name))]));
             println!("{}", i18n::tf("info.rom_title", &[("title", &h.rom_title)]));
             println!("{}", i18n::tf("info.game_code", &[("code", &h.game_code)]));
             println!("{}", i18n::tf("info.revision", &[("rev", &h.revision.to_string())]));
@@ -257,12 +321,13 @@ pub fn cmd_rom_info(json: bool, path: &str) -> ExitCode {
         }
     } else if bytes.len() >= 0x150 {
         let h = mbc::ops::read::parse_header(&bytes);
+        let en = enrich_mbc(&bytes, &h);
         if json {
-            emit_mbc_info("", 0, 0, &h);
+            emit_mbc_info("", 0, 0, &bytes);
         } else {
             println!("{}", i18n::tf("rom_info.file", &[("path", path)]));
             println!("{}", i18n::tf("info.cartridge", &[("kind", &i18n::t("kind.gb_mbc"))]));
-            print_mbc_human(None, h.rom_size_bytes, None, &h);
+            print_mbc_human(None, h.rom_size_bytes, None, &h, en);
         }
     } else {
         if json {
@@ -463,18 +528,73 @@ pub fn cmd_rtc_read(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
     }
 }
 
-/// `cfb erase [--mbc]` —— 清空 ROM（整片擦除）。
+/// `cfb erase [--mbc]` —— 清空 ROM（按 CFI 扇区逐个擦除，带进度；容量未知时回落整片擦除）。
 pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
     let Some(mut link) = open_powered(json, "erase", port, mbc) else {
         return ExitCode::from(3);
     };
+    let t0 = std::time::Instant::now();
+    let mut last_mb = 0u64;
+    let mut log = |m: &str| log_emit(json, m);
+    let mut progress = |d: u64, t: u64| progress_emit(json, d, t, &mut last_mb);
     let ok = if mbc {
-        mbc::ops::delete::erase_chip(&mut link, 240)
+        // CFI 查容量+扇区大小；卡上实读 MBC 代次决定 bank/地址映射（同 burn 逻辑）。
+        let (device_size, _buf, sector_size) = mbc::ops::read::rom_get_cfi(&mut link);
+        if device_size > 0 {
+            let live_ct = mbc::ops::read::read_cart_byte(&mut link, 0x147).unwrap_or(0xFF);
+            let kind = match live_ct {
+                0x0F..=0x13 => mbc::data::MbcKind::Mbc3,
+                _ => mbc::data::MbcKind::Mbc5,
+            };
+            link.gbc_write(0x00, &[0xf0]); // CFI 后强制复位，避免残留查询模式导致擦除无响应
+            link.gbc_warm_up();
+            log(&format!("擦除全片: flash={device_size} sector={sector_size}"));
+            mbc::ops::delete::erase_range_logged(
+                &mut link,
+                kind,
+                0,
+                device_size,
+                sector_size,
+                &mut progress,
+                &mut log,
+            )
+        } else {
+            log("容量未知（CFI 无响应），执行整片擦除（无分段进度）...");
+            mbc::ops::delete::erase_chip(&mut link, 240)
+        }
     } else {
-        gba::ops::delete::erase_chip(&mut link, 240)
+        let flash = gba::ops::read::read_info(&mut link);
+        if flash.device_size > 0 {
+            log(&format!(
+                "擦除全片: flash={} sector={}",
+                flash.device_size, flash.sector_size
+            ));
+            gba::ops::delete::erase_range_logged(
+                &mut link,
+                0,
+                flash.device_size as u32,
+                flash.sector_size,
+                &mut progress,
+                &mut log,
+            )
+        } else {
+            log("容量未知（CFI 无响应），执行整片擦除（无分段进度）...");
+            gba::ops::delete::erase_chip(&mut link, 240)
+        }
     };
+    let secs = t0.elapsed().as_secs_f64();
     device::power_off(&mut link);
-    finish(json, "erase", ok, 0, 0, 0.0)
+    if json {
+        log_emit(
+            true,
+            &format!(
+                "{} · {:.1}s",
+                if ok { "擦除完成" } else { "擦除失败" },
+                secs
+            ),
+        );
+    }
+    finish(json, "erase", ok, 0, 0, secs)
 }
 
 /// `cfb dump --out <f> [--mbc] [--len N]` —— 导出 ROM 到文件。
@@ -536,12 +656,20 @@ fn parse_save_type(json: bool, cmd: &str, raw: Option<String>) -> Option<gba::da
     }
 }
 
-/// MBC 不支持 FLASH / 免电；校验类型合法性。
-fn mbc_save_type(st: gba::data::SaveType) -> gba::data::SaveType {
+/// MBC 不支持 FLASH；免电走 `db_DMG_bl` 路径。
+fn mbc_save_type(st: gba::data::SaveType) -> Result<gba::data::SaveType, ()> {
     match st {
-        gba::data::SaveType::Flash | gba::data::SaveType::Batteryless => gba::data::SaveType::Sram,
-        other => other,
+        gba::data::SaveType::Flash => Err(()),
+        other => Ok(other),
     }
+}
+
+fn resolve_mbc_bl(link: &mut CartridgeLink) -> Option<(mbc::data::MbcKind, crate::gamedb::BatterylessConfig)> {
+    let raw = mbc::ops::read::read_live_header(link)?;
+    let h = mbc::ops::read::parse_header(&raw);
+    let kind = mbc::data::MbcKind::from_cartridge_type(h.cartridge_type);
+    let cfg = crate::gamedb::lookup_dmg_batteryless(&raw)?;
+    Some((kind, cfg))
 }
 
 /// 读卡带确定 MBC 代次 + 默认存档大小（头 0x149）。
@@ -576,17 +704,35 @@ pub fn cmd_save_dump(
     let mut log = |m: &str| log_emit(json, m);
 
     let res = if mbc {
-        let st = mbc_save_type(st);
-        let (kind, ram) = mbc_save_defaults(&mut link);
-        let len = len_opt.unwrap_or(ram);
-        if len == 0 {
-            device::power_off(&mut link);
-            op_err(json, cmd, &i18n::t("op.no_size"));
-            return ExitCode::from(3);
+        let st = match mbc_save_type(st) {
+            Ok(s) => s,
+            Err(()) => {
+                device::power_off(&mut link);
+                op_err(json, cmd, "MBC 不支持 FLASH 存档类型（用 sram / fram / batteryless）");
+                return ExitCode::from(2);
+            }
+        };
+        if matches!(st, gba::data::SaveType::Batteryless) {
+            let Some((kind, cfg)) = resolve_mbc_bl(&mut link) else {
+                device::power_off(&mut link);
+                op_err(json, cmd, &i18n::t("save.not_found"));
+                return ExitCode::from(3);
+            };
+            let r = mbc::ops::save::dump_batteryless(&mut link, kind, &cfg, out_path, &mut log, &mut progress);
+            emit_save_info(json, st, Some(cfg.offset), r.bytes);
+            r
+        } else {
+            let (kind, ram) = mbc_save_defaults(&mut link);
+            let len = len_opt.unwrap_or(ram);
+            if len == 0 {
+                device::power_off(&mut link);
+                op_err(json, cmd, &i18n::t("op.no_size"));
+                return ExitCode::from(3);
+            }
+            let r = mbc::ops::save::dump(&mut link, kind, matches!(st, gba::data::SaveType::Fram), len, out_path, &mut log, &mut progress);
+            emit_save_info(json, st, None, r.bytes);
+            r
         }
-        let r = mbc::ops::save::dump(&mut link, kind, matches!(st, gba::data::SaveType::Fram), len, out_path, &mut log, &mut progress);
-        emit_save_info(json, st, None, r.bytes);
-        r
     } else {
         match st {
             gba::data::SaveType::Batteryless => {
@@ -642,11 +788,29 @@ pub fn cmd_save_write(
     let mut log = |m: &str| log_emit(json, m);
 
     let res = if mbc {
-        let st = mbc_save_type(st);
-        let (kind, _) = mbc_save_defaults(&mut link);
-        let r = mbc::ops::save::write(&mut link, kind, matches!(st, gba::data::SaveType::Fram), &data, &mut log, &mut progress);
-        emit_save_info(json, st, None, r.bytes);
-        r
+        let st = match mbc_save_type(st) {
+            Ok(s) => s,
+            Err(()) => {
+                device::power_off(&mut link);
+                op_err(json, cmd, "MBC 不支持 FLASH 存档类型（用 sram / fram / batteryless）");
+                return ExitCode::from(2);
+            }
+        };
+        if matches!(st, gba::data::SaveType::Batteryless) {
+            let Some((kind, cfg)) = resolve_mbc_bl(&mut link) else {
+                device::power_off(&mut link);
+                op_err(json, cmd, &i18n::t("save.not_found"));
+                return ExitCode::from(3);
+            };
+            let r = mbc::ops::save::write_batteryless(&mut link, kind, &cfg, &data, &mut log, &mut progress);
+            emit_save_info(json, st, Some(cfg.offset), r.bytes);
+            r
+        } else {
+            let (kind, _) = mbc_save_defaults(&mut link);
+            let r = mbc::ops::save::write(&mut link, kind, matches!(st, gba::data::SaveType::Fram), &data, &mut log, &mut progress);
+            emit_save_info(json, st, None, r.bytes);
+            r
+        }
     } else {
         match st {
             gba::data::SaveType::Batteryless => {
@@ -700,11 +864,29 @@ pub fn cmd_save_verify(
     let mut log = |m: &str| log_emit(json, m);
 
     let res = if mbc {
-        let st = mbc_save_type(st);
-        let (kind, _) = mbc_save_defaults(&mut link);
-        let r = mbc::ops::save::verify(&mut link, kind, matches!(st, gba::data::SaveType::Fram), &data, &mut log, &mut progress);
-        emit_save_info(json, st, None, r.bytes);
-        r
+        let st = match mbc_save_type(st) {
+            Ok(s) => s,
+            Err(()) => {
+                device::power_off(&mut link);
+                op_err(json, cmd, "MBC 不支持 FLASH 存档类型（用 sram / fram / batteryless）");
+                return ExitCode::from(2);
+            }
+        };
+        if matches!(st, gba::data::SaveType::Batteryless) {
+            let Some((kind, cfg)) = resolve_mbc_bl(&mut link) else {
+                device::power_off(&mut link);
+                op_err(json, cmd, &i18n::t("save.not_found"));
+                return ExitCode::from(3);
+            };
+            let r = mbc::ops::save::verify_batteryless(&mut link, kind, &cfg, &data, &mut log, &mut progress);
+            emit_save_info(json, st, Some(cfg.offset), r.bytes);
+            r
+        } else {
+            let (kind, _) = mbc_save_defaults(&mut link);
+            let r = mbc::ops::save::verify(&mut link, kind, matches!(st, gba::data::SaveType::Fram), &data, &mut log, &mut progress);
+            emit_save_info(json, st, None, r.bytes);
+            r
+        }
     } else {
         match st {
             gba::data::SaveType::Batteryless => {
@@ -721,6 +903,111 @@ pub fn cmd_save_verify(
             }
             gba::data::SaveType::Sram | gba::data::SaveType::Flash | gba::data::SaveType::Fram => {
                 let r = gba::ops::save::verify(&mut link, st, &data, &mut log, &mut progress);
+                emit_save_info(json, st, None, r.bytes);
+                r
+            }
+        }
+    };
+    device::power_off(&mut link);
+    finish(json, cmd, res.success, res.bytes, res.mismatch_bytes, res.seconds)
+}
+
+/// `cfb save-erase [--mbc] [--type ...] [--len N]` —— 擦除存档（填 0xFF；FLASH 写前整片擦除）。
+pub fn cmd_save_erase(
+    json: bool,
+    port: Option<String>,
+    mbc: bool,
+    type_raw: Option<String>,
+    len_opt: Option<u64>,
+) -> ExitCode {
+    let cmd = "save-erase";
+    let Some(st) = parse_save_type(json, cmd, type_raw) else {
+        return ExitCode::from(2);
+    };
+    let Some(mut link) = open_powered(json, cmd, port, mbc) else {
+        return ExitCode::from(3);
+    };
+    let mut last_mb = u64::MAX;
+    let mut progress = |d: u64, t: u64| progress_emit(json, d, t, &mut last_mb);
+    let mut log = |m: &str| log_emit(json, m);
+
+    let res = if mbc {
+        let st = match mbc_save_type(st) {
+            Ok(s) => s,
+            Err(()) => {
+                device::power_off(&mut link);
+                op_err(json, cmd, "MBC 不支持 FLASH 存档类型（用 sram / fram / batteryless）");
+                return ExitCode::from(2);
+            }
+        };
+        if matches!(st, gba::data::SaveType::Batteryless) {
+            let Some((kind, cfg)) = resolve_mbc_bl(&mut link) else {
+                device::power_off(&mut link);
+                op_err(json, cmd, &i18n::t("save.not_found"));
+                return ExitCode::from(3);
+            };
+            let len = len_opt.unwrap_or(cfg.size);
+            log(&i18n::t("save.erase"));
+            let data = vec![0xffu8; len as usize];
+            let r = mbc::ops::save::write_batteryless(&mut link, kind, &cfg, &data, &mut log, &mut progress);
+            emit_save_info(json, st, Some(cfg.offset), r.bytes);
+            r
+        } else {
+            let (kind, ram) = mbc_save_defaults(&mut link);
+            let len = len_opt.unwrap_or(ram);
+            if len == 0 {
+                device::power_off(&mut link);
+                op_err(json, cmd, &i18n::t("op.no_size"));
+                return ExitCode::from(3);
+            }
+            log(&i18n::t("save.erase"));
+            let data = vec![0xffu8; len as usize];
+            let r = mbc::ops::save::write(
+                &mut link,
+                kind,
+                matches!(st, gba::data::SaveType::Fram),
+                &data,
+                &mut log,
+                &mut progress,
+            );
+            emit_save_info(json, st, None, r.bytes);
+            r
+        }
+    } else {
+        match st {
+            gba::data::SaveType::Batteryless => {
+                let info = gba::ops::read_info(&mut link);
+                if info.device_size == 0 {
+                    device::power_off(&mut link);
+                    op_err(json, cmd, &i18n::t("op.no_size"));
+                    return ExitCode::from(3);
+                }
+                let buffer_write_bytes = info.buffer_write_bytes as u16;
+                let mirror = read_rom_mirror(&mut link, info.device_size, &mut progress);
+                let Some((off, size)) = gba::ops::save::batteryless_locate(&mirror) else {
+                    device::power_off(&mut link);
+                    op_err(json, cmd, &i18n::t("save.not_found"));
+                    return ExitCode::from(3);
+                };
+                let len = len_opt.unwrap_or(size);
+                log(&i18n::t("save.erase"));
+                let data = vec![0xffu8; len as usize];
+                let r = gba::ops::save::write_batteryless(
+                    &mut link,
+                    &mirror,
+                    buffer_write_bytes,
+                    &data,
+                    &mut log,
+                    &mut progress,
+                );
+                emit_save_info(json, st, Some(off), r.bytes);
+                r
+            }
+            gba::data::SaveType::Sram | gba::data::SaveType::Flash | gba::data::SaveType::Fram => {
+                let len = len_opt.unwrap_or(64 * 1024);
+                log(&i18n::t("save.erase"));
+                let data = vec![0xffu8; len as usize];
+                let r = gba::ops::save::write(&mut link, st, &data, &mut log, &mut progress);
                 emit_save_info(json, st, None, r.bytes);
                 r
             }
@@ -830,6 +1117,7 @@ mod tests {
         }
         rom[0x14d] = checksum;
 
+        assert!(mbc::ops::read::is_gb_header(&rom));
         let h = mbc::ops::read::parse_header(&rom);
         assert_eq!(h.title, "POKEMON");
         assert_eq!(h.mbc_name, "MBC3");
@@ -837,6 +1125,12 @@ mod tests {
         assert_eq!(h.ram_size_bytes, 32 * 1024, "0x149=0x03 应为 32KB RAM");
         assert!(h.rtc);
         assert!(h.header_checksum.ok);
+    }
+
+    #[test]
+    fn blank_is_not_gb_header() {
+        let blank = [0xFFu8; 0x150];
+        assert!(!mbc::ops::read::is_gb_header(&blank));
     }
 
     #[test]

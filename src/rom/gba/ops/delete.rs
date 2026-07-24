@@ -51,6 +51,39 @@ pub fn erase_sector(link: &mut CartridgeLink, byte_base: u32, retries: u32) -> b
     false
 }
 
+/// 带进度/日志的区间擦除。`progress(done_sectors, total_sectors)`；失败返回 false。
+/// 逐扇区调用 [`erase_sector`]，用于 `cfb erase` 展示实时进度（整片 `erase_chip` 无法分段汇报）。
+pub fn erase_range_logged(
+    link: &mut CartridgeLink,
+    from: u32,
+    to: u32,
+    sector_size: u32,
+    progress: &mut dyn FnMut(u64, u64),
+    log: &mut dyn FnMut(&str),
+) -> bool {
+    let ss = sector_size.max(0x1000);
+    let start = from - (from % ss);
+    let total = (((to.saturating_sub(start)) as u64 + ss as u64 - 1) / ss as u64).max(1);
+    let t0 = Instant::now();
+    let mut off = start;
+    let mut done = 0u64;
+    log(&format!("扇区 {ss}B x {total}"));
+    while off < to {
+        if !erase_sector(link, off, 5) {
+            log(&format!(
+                "擦除失败 @0x{off:X} ({done}/{total}) | {:.1}s",
+                t0.elapsed().as_secs_f64()
+            ));
+            return false;
+        }
+        done += 1;
+        progress(done, total);
+        off = off.saturating_add(ss);
+    }
+    log(&format!("擦除完成 {done}/{total} | {:.1}s", t0.elapsed().as_secs_f64()));
+    true
+}
+
 /// All PPB Erase：清除全部扇区的持久保护位（上半区写不进时多半因 PPB）。
 pub fn unlock_all_ppb(link: &mut CartridgeLink) {
     // 退出任何命令集

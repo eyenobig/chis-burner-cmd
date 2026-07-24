@@ -63,6 +63,18 @@ pub enum Event {
         rom_checksum: Option<RomChecksum>,
         /// 是否带 RTC（GBA 按 game code 启发式判断）。
         rtc: Option<bool>,
+        /// 存档 RAM 大小（字节）。MBC 从头 0x149 解析；GBA 无法直接得知（需探测），为 None。
+        save_size_bytes: Option<u64>,
+        /// GB/GBC(MBC) 专属：卡带类型原始字节（头 0x147）。GBA 恒为 null（GBA 无此概念，用 game_code 代替）。
+        cartridge_type: Option<u8>,
+        /// GB/GBC(MBC) 专属：卡带类型对应的 MBC 名称（如 "MBC5"）。GBA 恒为 null。
+        mbc_name: Option<String>,
+        /// GB/GBC 免电存档（`db_DMG_bl`）：ROM 内偏移；未命中为 null。
+        batteryless_offset: Option<u64>,
+        /// 免电逻辑存档字节数。
+        batteryless_size: Option<u64>,
+        /// 免电布局：0=连续，1=bank 前半，2=bank 后半。
+        batteryless_layout: Option<u8>,
     },
 
     /// 出错（未实现、未知命令、设备异常等）。客户端可据此提示。
