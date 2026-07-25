@@ -1,7 +1,6 @@
 //! GBA · 导：导出（dump ROM 到文件）。
 //!
 //! 基于 `CartridgeLink::rom_read` 按 4096B 连续读出 `len` 字节写入文件。长度通常取 CFI 容量。
-//! ⚠️ 未经硬件测试（见根目录 TODO.md）。
 
 use std::fs::File;
 use std::io::Write;

@@ -1,7 +1,6 @@
 //! MBC · 删：擦除 GB/GBC flash（整片 / 逐扇区）。
 //!
 //! 从参考源 `mission_mbc5.cs` 复刻（GB 总线 flash 命令序列，unlock 写 0xAAA/0x555）。
-#![allow(dead_code)]
 
 use std::time::{Duration, Instant};
 
@@ -55,12 +54,6 @@ pub(crate) fn phys_sectors_covering(kind: MbcKind, from: u64, to: u64, sector_si
     out
 }
 
-/// 整片擦除并轮询完成（无进度；优先用 [`erase_range_logged`]）。
-/// MBC5 窗口在 0x4000：轮询 `0x4000`（C# 轮询 0 在部分卡上会立刻读到总线空闲 0xFF，造成假完成）。
-pub fn erase_chip(link: &mut CartridgeLink, timeout_secs: u64) -> bool {
-    erase_chip_logged(link, timeout_secs, &mut |_, _| {}, &mut |_| {})
-}
-
 /// 抽查若干 bank 头 16B 是否全 0xFF（须先 0xF0 退出状态机）。
 fn blank_check_banks(link: &mut CartridgeLink, banks: u32) -> bool {
     link.gbc_write(0x00, &[0xf0]);
@@ -79,7 +72,7 @@ fn blank_check_banks(link: &mut CartridgeLink, banks: u32) -> bool {
     true
 }
 
-/// 整片擦除 + 心跳：对齐 tmp_gb_burn / C# `mission_eraseChip_mbc5`。
+/// 整片擦除 + 心跳：对齐 C# `mission_eraseChip_mbc5`。
 /// - 按 CFI typical 估时；最短等待约 90–180s，避免状态位 0xFF 假完成
 /// - 连续若干次 FF 后再 0xF0 + 多 bank 阵列空白确认
 /// - `timeout_secs` 作硬超时下限（秒）；实际硬超时取 max(timeout, CFI×3, 180s)
@@ -301,8 +294,7 @@ pub fn erase_range_logged(
         let list: Vec<String> = sectors.iter().map(|s| format!("0x{s:X}")).collect();
         log(&format!("扇区列表: {}", list.join(", ")));
     }
-    // 开局先报 0/total，避免首扇区耗时长时客户端一直停在裸「擦除」无分数。
-    // 自高地址向低擦（对齐 tmp_gb_burn / 部分 NOR 习惯）。
+    // 自高地址向低擦（部分 NOR 习惯）。
     plog.report(0, total, progress, log);
     for sec in sectors.into_iter().rev() {
         if !erase_one_phys_sector(link, kind, sec, sector_size, &mut flash_bank) {
@@ -319,6 +311,8 @@ pub fn erase_range_logged(
 }
 
 /// profile 驱动的 sector erase 区间（命中 profile 走命令序列，否则回落 [`erase_range`]）。
+/// MBC Autoselect 自动匹配接好后由 burn 路径调用。
+#[allow(dead_code)]
 pub fn erase_range_profile(
     link: &mut CartridgeLink,
     kind: MbcKind,

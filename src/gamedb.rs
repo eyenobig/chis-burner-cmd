@@ -56,11 +56,6 @@ fn sha1_range(rom: &[u8], end: usize) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-#[allow(dead_code)]
-pub fn header_sha1(rom: &[u8]) -> String {
-    header_sha1_agb(rom)
-}
-
 pub fn lookup_agb(rom: &[u8]) -> Option<GameDbEntry> {
     let sha = header_sha1_agb(rom);
     lookup_file("db_AGB.json", &sha).or_else(|| query_game(GAMEDB_AGB_SRC, &sha))
@@ -69,11 +64,6 @@ pub fn lookup_agb(rom: &[u8]) -> Option<GameDbEntry> {
 pub fn lookup_dmg(rom: &[u8]) -> Option<GameDbEntry> {
     let sha = header_sha1_dmg(rom);
     lookup_file("db_DMG.json", &sha).or_else(|| query_game(GAMEDB_DMG_SRC, &sha))
-}
-
-#[allow(dead_code)]
-pub fn lookup_game_name(rom: &[u8]) -> Option<String> {
-    lookup_agb(rom).map(|e| e.gn)
 }
 
 /// 按 flashGBX 规则从 GB 头生成标题候选，查 `db_DMG_bl`。

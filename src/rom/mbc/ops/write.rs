@@ -1,10 +1,8 @@
 //! MBC · 写：编程 / 烧录 GB/GBC ROM（MBC3 / MBC5 自动识别）。
 //!
-//! 流程对齐 tmp_gb_burn（本机 COM13 成功路径）/ beggar_socket：
-//! 软件插拔 **3.3V** → CFI/ID → **整片擦 + ROM 范围扇区擦（16KB）** → 再软件插拔 →
-//! 逐 bank 0xfc 编程 → 读回校验。
-//! MBC5 bank：N→N+1 @0x2000（本机卡实测，见 `switch_bank`）。
-#![allow(dead_code)]
+//! 流程：软件插拔 3.3V → CFI/ID → 整片擦 + ROM 范围扇区擦（16KB）→
+//! 再软件插拔 → 逐 bank 0xfc 编程 → 读回校验。
+//! MBC5 bank：N→N+1 @0x2000（见 `switch_bank`）。
 
 use std::time::Instant;
 
@@ -77,7 +75,7 @@ pub fn burn(
         buf_wr = 256;
         log("JS28F256：buf_wr=256");
     }
-    // 扇区：允许 16KB；CFI 缺失或 >16KB（过粗）时用 16KB（tmp_gb_burn 成功路径）
+    // 扇区：允许 16KB；CFI 缺失或 >16KB（过粗）时用 16KB
     let sector_size = if cfi_sector >= 0x1000 && cfi_sector <= ERASE_SECTOR_16K {
         cfi_sector
     } else {
@@ -111,48 +109,43 @@ pub fn burn(
     link.gbc_warm_up();
     switch_bank(link, 0, kind);
 
-    // ---- 步骤 4：整片擦 + ROM 范围扇区擦（对齐 tmp；不因「看似空白」跳过）----
-    let force_skip_erase = std::env::var_os("CFB_SKIP_ERASE").is_some();
-    // MBC：默认始终整片+扇区；`chip_erase` 为 false 时仍走同一路径（临时成功行为优先）
+    // ---- 步骤 4：整片擦 + ROM 范围扇区擦（不因「看似空白」跳过）----
+    // MBC 默认始终整片+扇区；`chip_erase` 保留与 GBA/CLI 对齐。
     let _ = chip_erase;
-    if force_skip_erase {
-        log("CFB_SKIP_ERASE：跳过擦除");
-    } else {
-        log("擦除：整片 + ROM 范围扇区补擦 ...");
-        // 整片失败不硬退：仍依赖后续扇区擦（tmp 同策略）
-        if !super::delete::erase_chip_logged(link, 180, progress, log) {
-            log("整片擦失败或未净；将仅依赖后续扇区擦");
+    log("擦除：整片 + ROM 范围扇区补擦 ...");
+    // 整片失败不硬退：仍依赖后续扇区擦
+    if !super::delete::erase_chip_logged(link, 180, progress, log) {
+        log("整片擦失败或未净；将仅依赖后续扇区擦");
+    }
+    log(&format!(
+        "ROM 范围扇区擦（{}B）...",
+        sector_size
+    ));
+    if !erase_range_logged(link, kind, 0, length, sector_size, progress, log) {
+        log(&format!("扇区擦失败 | {}", elapsed(&start)));
+        res.first_bad = Some(0);
+        res.seconds = start.elapsed().as_secs_f64();
+        return res;
+    }
+    link.gbc_write(0x00, &[0xf0]);
+    switch_bank(link, 0, kind);
+    // 擦后空白：警告可继续，不硬拦编程
+    let banks = ((length + 0x3fff) / 0x4000) as u32;
+    let mut probe = [0u8; 16];
+    let mut dirty = false;
+    for b in 0..banks.min(32) {
+        switch_bank(link, b, kind);
+        if !(link.gbc_read(bus_addr(b << 14, kind), &mut probe)
+            && probe.iter().all(|&x| x == 0xff))
+        {
+            dirty = true;
+            log(&format!("警告：擦后 bank{b} 非空，仍继续编程"));
+            break;
         }
-        log(&format!(
-            "ROM 范围扇区擦（{}B）...",
-            sector_size
-        ));
-        if !erase_range_logged(link, kind, 0, length, sector_size, progress, log) {
-            log(&format!("扇区擦失败 | {}", elapsed(&start)));
-            res.first_bad = Some(0);
-            res.seconds = start.elapsed().as_secs_f64();
-            return res;
-        }
-        link.gbc_write(0x00, &[0xf0]);
-        switch_bank(link, 0, kind);
-        // 擦后空白：警告可继续（对齐 tmp），不硬拦编程
-        let banks = ((length + 0x3fff) / 0x4000) as u32;
-        let mut probe = [0u8; 16];
-        let mut dirty = false;
-        for b in 0..banks.min(32) {
-            switch_bank(link, b, kind);
-            if !(link.gbc_read(bus_addr(b << 14, kind), &mut probe)
-                && probe.iter().all(|&x| x == 0xff))
-            {
-                dirty = true;
-                log(&format!("警告：擦后 bank{b} 非空，仍继续编程"));
-                break;
-            }
-        }
-        switch_bank(link, 0, kind);
-        if !dirty {
-            log("擦后空白抽查通过");
-        }
+    }
+    switch_bank(link, 0, kind);
+    if !dirty {
+        log("擦后空白抽查通过");
     }
 
     // 擦除后再软件插拔：对齐「擦除 mission 结束关口 → 烧录 mission 重开」；

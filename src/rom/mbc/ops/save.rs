@@ -10,7 +10,7 @@
 //! - FRAM 用 `gbc_*_fram`，latency = 10
 //!
 //! ⚠️ reconnect_as(gbc) 上 3.3V + gbc_warm_up；失败重连后应按偏好/默认确认 3.3V + 重新使能 RAM + 重选 bank。
-//! ⚠️ 未经硬件测试（见根目录 TODO.md）。
+//! ⚠️ 待硬件验证（见根目录 TODO.md）。
 #![allow(dead_code)]
 
 use std::time::Instant;

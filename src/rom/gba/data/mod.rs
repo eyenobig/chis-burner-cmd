@@ -49,12 +49,6 @@ pub struct BurnOptions {
     pub verify: bool,
 }
 
-impl Default for BurnOptions {
-    fn default() -> Self {
-        Self { chip_erase: false, unlock_ppb: true, verify: true }
-    }
-}
-
 /// 烧录结果。
 pub struct BurnResult {
     pub success: bool,

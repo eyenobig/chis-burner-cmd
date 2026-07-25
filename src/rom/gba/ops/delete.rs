@@ -1,7 +1,6 @@
 //! GBA · 删：擦除 flash（整片 / 逐扇区 / PPB 解锁）。
 //!
 //! 从参考源 `GbaFlasher.cs` 的 `EraseChip` / `EraseSector` / `UnlockAllPpb` 复刻。
-//! ⚠️ 未经硬件测试（见根目录 TODO.md）。
 
 use std::time::{Duration, Instant};
 
@@ -108,10 +107,9 @@ pub fn unlock_all_ppb(link: &mut CartridgeLink) {
 
 /// profile 命中时用 chip_erase 序列；否则回落 [`erase_chip`]。
 pub fn chip_erase_profile(link: &mut CartridgeLink, p: &crate::profile::Profile, timeout_secs: u64) -> bool {
+    let timeout = p.chip_erase_timeout.max(timeout_secs);
     if let Some(seq) = p.chip_erase() {
-        let to = p.chip_erase_timeout.max(timeout_secs);
-        // 命中后跑序列；run_gba 内部已含每条 cmd 的 wait_for 轮询。
-        // 但 chip_erase 的超时需整体兜底，这里包一层：序列失败再重试一次。
+        // run_gba 内部已含每条 cmd 的 wait_for；失败则重连重试。
         for _ in 0..3 {
             if crate::profile::run_gba(link, &seq, 0) {
                 return true;
@@ -120,7 +118,7 @@ pub fn chip_erase_profile(link: &mut CartridgeLink, p: &crate::profile::Profile,
         }
         false
     } else {
-        erase_chip(link, timeout_secs)
+        erase_chip(link, timeout)
     }
 }
 

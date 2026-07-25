@@ -9,7 +9,7 @@
 //! - FLASH 写前需整片擦除（JEDEC Chip-Erase 序列，轮询 ram_read(0)==0xff）。
 //! - 免电存档藏在 ROM flash 里，靠魔数 `"<3 from Maniac"` 定位：见 [`batteryless_locate`]。
 //!
-//! ⚠️ 未经硬件测试（见根目录 TODO.md）。
+//! ⚠️ GBA SRAM 路径已硬件验证；FLASH / FRAM / 免电及 `save-erase` 见根目录 TODO.md。
 #![allow(dead_code)]
 
 use std::time::Instant;

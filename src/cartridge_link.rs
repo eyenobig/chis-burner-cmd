@@ -43,11 +43,6 @@ impl CartridgeLink {
         }
     }
 
-    #[allow(dead_code)] // 供后续 burn/校验使用
-    pub fn is_open(&self) -> bool {
-        self.sp.is_some()
-    }
-
     pub fn port_name(&self) -> &str {
         &self.port_name
     }
@@ -76,7 +71,6 @@ impl CartridgeLink {
 
     /// 关/重开串口并重新上电——用于 MCU 卡死后的复活。
     /// `gbc=true` 时上 3.3V 并用 GB 总线复位（MBC 烧录/擦除/校验路径）。
-    #[allow(dead_code)] // 供后续 burn 的卡死复活使用
     pub fn reconnect(&mut self) -> std::io::Result<()> {
         self.reconnect_as(false)
     }
@@ -114,12 +108,6 @@ impl CartridgeLink {
         std::thread::sleep(Duration::from_millis(333));
         self.gbc_warm_up();
         Ok(())
-    }
-
-    /// 兼容旧名：同 [`Self::soft_unplug_3v3`]。
-    #[inline]
-    pub fn soft_unplug(&mut self) -> std::io::Result<()> {
-        self.soft_unplug_3v3()
     }
 
     // DTR/RTS 置位再清零：重置单片机内的命令 buffer。

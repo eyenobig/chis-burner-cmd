@@ -101,7 +101,7 @@ pub fn is_gba_header(header: &[u8]) -> bool {
         && header_checksum(header).ok
 }
 
-/// 已知带 RTC 的 GBA game code 前缀（启发式；真正的 GPIO/S3511 探测待移植）。
+/// 已知带 RTC 的 GBA game code 前缀（启发式；`info` 尚未改用 GPIO/S3511 探测）。
 const RTC_PREFIXES: &[&str] = &[
     "AXV", "AXP", "BPE", // Pokémon Ruby / Sapphire / Emerald
     "U3I", "U32", "U33", // Boktai 1 / 2 / 3

@@ -2,8 +2,6 @@
 //!
 //! 从参考源 `mission_mbc5.cs` 的 `mission_dumpRom_mbc5` 复刻：按 16KB bank 切换，
 //! 每 4096B 用 `gbc_read`（cmd 0xfb）读出。长度由调用方给定（通常按 ROM 头容量）。
-//! ⚠️ 未经硬件测试（见根目录 TODO.md）。
-#![allow(dead_code)]
 
 use std::fs::File;
 use std::io::Write;

@@ -28,6 +28,6 @@ INF**，Windows 会直接用这个名字。属于 `mcu` 固件工程的改动，
 
 ## 说明：cfb 本身不依赖系统显示名
 
-`cfb` 通过 **USB VID/PID（0483/0721）** 识别烧录器（见 [../src/Core/features/device_detect](../src/Core/features/device_detect/README.md)），
+`cfb` 通过 **USB VID/PID（0483/0721）** 识别烧录器（常量见 [../src/cartridge_link.rs](../src/cartridge_link.rs)，枚举/detect 见 [../src/device/](../src/device/)），
 所以 `cfb detect` / `cfb info` / `cfb burn` **无需端口、无需改名**就能自动找到设备。
 上面两条路线只是让**人在设备管理器里**看得更清楚，属于锦上添花。

@@ -10,6 +10,7 @@
 *.srm
 
 # Logs / archives
+/logs/
 *.log
 *.zip
 *.7z

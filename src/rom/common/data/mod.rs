@@ -5,7 +5,6 @@
 pub enum CartridgeKind {
     Gba,
     /// GB/GBC（MBC）——通过 GB 总线协议读取。
-    #[allow(dead_code)]
     GbMbc,
     Unknown,
 }

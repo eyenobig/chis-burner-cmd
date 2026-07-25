@@ -38,6 +38,7 @@ pub fn switch_bank(link: &mut CartridgeLink, bank: u32, kind: MbcKind) {
 /// FlashGBX `DMG_Unlicensed_MBCX.SelectBankFlash`：>8MiB 多 die。
 /// **beggar_socket 无此步骤**；普通 Chis 复制卡调用会打乱总线状态，导致烧录在 0x4000 失败。
 /// 仅在确认 MBCX 多 die 时使用；常规 burn/erase 不要调用。
+#[allow(dead_code)]
 pub fn switch_flash_bank(link: &mut CartridgeLink, flash_bank: u32) {
     link.gbc_write(0x0000, &[0x05]);
     link.gbc_write(0x4000, &[0x82]);
@@ -173,7 +174,7 @@ pub fn rom_cal_erase_time_ms(link: &mut CartridgeLink) -> u64 {
     ms
 }
 
-/// Intel/Numonyx JS28F256 Autoselect：强制 buffer write = 256（C# / tmp_gb_burn）。
+/// Intel/Numonyx JS28F256 Autoselect：强制 buffer write = 256。
 pub fn is_js28f256(id: &[u8; 4]) -> bool {
     *id == [0x89, 0x7e, 0x22, 0x01]
 }

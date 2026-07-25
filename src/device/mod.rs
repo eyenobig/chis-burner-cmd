@@ -7,10 +7,8 @@ pub mod data;
 pub mod ops;
 
 // 命令入口给 main 用；其余函数/类型在模块内部经 `ops`/`data` 路径直接引用。
+// `power_off` 仅 ops 内部（disconnect）使用，不对外再导出。
 pub use ops::{
     cmd_detect, cmd_disconnect, cmd_select, cmd_voltage, power, power_idle, resolve_port,
     voltage_for,
 };
-// `power_off` 仅供 disconnect 等内部路径；对外空闲回压用 `power_idle`。
-#[allow(unused_imports)]
-pub use ops::power_off;

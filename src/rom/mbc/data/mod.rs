@@ -15,7 +15,6 @@ pub struct MbcHeader {
     pub mbc_name: &'static str,
     pub rom_size_bytes: u64, // 0x148: 32KB << n
     /// RAM/存档大小（字节），来自头 0x149；0=无 RAM。
-    #[allow(dead_code)]
     pub ram_size_bytes: u64,
     pub header_checksum: RomChecksum,
     pub rtc: bool,

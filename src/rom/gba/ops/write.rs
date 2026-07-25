@@ -2,7 +2,6 @@
 //!
 //! 从参考源 `GbaFlasher.cs` 的 `ProgramFlow` / `FindBadSectors` / `Burn` 复刻。
 //! 健壮性：每包必须 ACK 才前进，连续无应答则 `reconnect` 复活后重试；烧后逐扇区校验+修复。
-//! ⚠️ 未经硬件测试（见根目录 TODO.md）。
 
 use std::time::Instant;
 
@@ -11,10 +10,10 @@ use super::read::read_info;
 use crate::cartridge_link::CartridgeLink;
 use crate::profile;
 use crate::progress_display::{Phase, ProgressLog};
-use crate::rom::gba::data::{BurnOptions, BurnResult};
+use crate::rom::gba::data::{BurnOptions, BurnResult, SECTOR};
 
-pub const SECTOR: u64 = 0x20000; // 128KB
 const PACKET: usize = 4096;
+const SECTOR_U64: u64 = SECTOR as u64;
 
 /// 编程 [from,to)；每包必须 ACK 才前进，连续失败重连复活。返回首个失败地址或 None(完成)。
 fn program_flow(
@@ -70,7 +69,7 @@ fn find_bad_sectors(link: &mut CartridgeLink, rom: &[u8], total: u64) -> (Vec<u6
         }
         for i in 0..len {
             if b[i] != rom[pos as usize + i] {
-                bad.insert(((pos + i as u64) / SECTOR) * SECTOR);
+                bad.insert(((pos + i as u64) / SECTOR_U64) * SECTOR_U64);
                 mismatch += 1;
             }
         }
@@ -145,7 +144,7 @@ pub fn burn(
         let mut write_plog = ProgressLog::new(Phase::Write);
         let mut b = 0u64;
         while b < length {
-            let end = (b + SECTOR).min(length);
+            let end = (b + SECTOR_U64).min(length);
             let ok = match &prof {
                 Some(p) => sector_erase_profile(link, p, b as u32, 5),
                 None => erase_sector(link, b as u32, 5),
@@ -155,7 +154,7 @@ pub fn burn(
                 res.first_bad = Some(b);
                 break;
             }
-            // 临时放下 plog，先打 log，再包一层 progress（避免与 log 借用冲突）
+            // 先打 log，再包 progress（避免与 log 借用冲突）
             let fail = {
                 let mut write_progress = |d: u64, t: u64| {
                     progress(d, t);
@@ -169,7 +168,7 @@ pub fn burn(
                 res.first_bad = Some(addr);
                 break;
             }
-            b += SECTOR;
+            b += SECTOR_U64;
         }
     }
 
@@ -188,7 +187,7 @@ pub fn burn(
                     None => erase_sector(link, bsec as u32, 5),
                 };
                 if ok {
-                    let end = (bsec + SECTOR).min(length);
+                    let end = (bsec + SECTOR_U64).min(length);
                     let mut write_progress = |d: u64, t: u64| {
                         progress(d, t);
                         if write_plog.should_log(d, t) {
