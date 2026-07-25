@@ -6,6 +6,7 @@
 use std::time::{Duration, Instant};
 
 use crate::cartridge_link::CartridgeLink;
+use crate::progress_display::{Phase, ProgressLog};
 
 /// 全片擦除并等待完成（轮询读到 0xFFFF）。
 pub fn erase_chip(link: &mut CartridgeLink, timeout_secs: u64) -> bool {
@@ -64,25 +65,24 @@ pub fn erase_range_logged(
     let ss = sector_size.max(0x1000);
     let start = from - (from % ss);
     let total = (((to.saturating_sub(start)) as u64 + ss as u64 - 1) / ss as u64).max(1);
-    let t0 = Instant::now();
     let mut off = start;
     let mut done = 0u64;
+    let mut plog = ProgressLog::new(Phase::Erase);
     log(&format!("扇区 {ss}B x {total}"));
     // 开局先报 0/total，避免首扇区耗时长时客户端一直停在裸「擦除」无分数。
-    progress(0, total);
+    plog.report(0, total, progress, log);
     while off < to {
         if !erase_sector(link, off, 5) {
             log(&format!(
-                "擦除失败 @0x{off:X} ({done}/{total}) | {:.1}s",
-                t0.elapsed().as_secs_f64()
+                "擦除失败 @0x{off:X} · {:.1}s",
+                plog.elapsed_secs()
             ));
             return false;
         }
         done += 1;
-        progress(done, total);
+        plog.report(done, total, progress, log);
         off = off.saturating_add(ss);
     }
-    log(&format!("擦除完成 {done}/{total} | {:.1}s", t0.elapsed().as_secs_f64()));
     true
 }
 

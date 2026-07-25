@@ -110,7 +110,8 @@ pub fn rom_get_cfi(link: &mut CartridgeLink) -> (u64, u16, u32) {
         link.gbc_read(0x60, &mut b);
         let sec_hi = b[0];
         let sector_raw = (((sec_hi as u32) << 8) | sec_lo as u32).saturating_mul(256);
-        let sector_size = if sector_raw >= 0x1000 && sector_raw <= 0x20000 {
+        // GB 复制卡均匀扇区多为 4~64KiB；128KiB 上限易被总线噪声误读成 0x20000
+        let sector_size = if sector_raw >= 0x1000 && sector_raw <= 0x10000 {
             sector_raw
         } else {
             DEFAULT_SECTOR
@@ -128,6 +129,53 @@ pub fn rom_get_cfi(link: &mut CartridgeLink) -> (u64, u16, u32) {
 pub fn rom_get_size(link: &mut CartridgeLink) -> (u64, u16) {
     let (size, buf, _) = rom_get_cfi(link);
     (size, buf)
+}
+
+/// Autoselect ID（C# `mbc5_romGetID`）：4 字节 `[mfr, id0, id1, id2]`。
+pub fn rom_get_id(link: &mut CartridgeLink) -> [u8; 4] {
+    link.gbc_write(0xaaa, &[0xaa]);
+    link.gbc_write(0x555, &[0x55]);
+    link.gbc_write(0xaaa, &[0x90]);
+    let mut id = [0u8; 4];
+    let mut b = [0u8; 1];
+    link.gbc_read(0x00, &mut b);
+    id[0] = b[0];
+    link.gbc_read(0x02, &mut b);
+    id[1] = b[0];
+    link.gbc_read(0x1c, &mut b);
+    id[2] = b[0];
+    link.gbc_read(0x1e, &mut b);
+    id[3] = b[0];
+    link.gbc_write(0x00, &[0xf0]);
+    id
+}
+
+/// CFI 整片擦 typical 时间（毫秒）。对齐 C# `mbc5_romCalEraseTime`（简化）。
+pub fn rom_cal_erase_time_ms(link: &mut CartridgeLink) -> u64 {
+    link.gbc_write(0xaa, &[0x98]);
+    let mut cfi = [0u8; 1];
+    link.gbc_read(0x42, &mut cfi);
+    let timeout_block = 1u64 << cfi[0].min(30);
+    link.gbc_read(0x44, &mut cfi);
+    let timeout_chip = 1u64 << cfi[0].min(30);
+    link.gbc_write(0x00, &[0xf0]);
+    let mut ms = if timeout_chip <= 1 {
+        timeout_block.saturating_mul(512)
+    } else {
+        timeout_chip
+    };
+    if ms < 5_000 {
+        ms = 5_000;
+    }
+    if ms > 600_000 {
+        ms = 600_000;
+    }
+    ms
+}
+
+/// Intel/Numonyx JS28F256 Autoselect：强制 buffer write = 256（C# / tmp_gb_burn）。
+pub fn is_js28f256(id: &[u8; 4]) -> bool {
+    *id == [0x89, 0x7e, 0x22, 0x01]
 }
 
 /// 从卡带读 1 字节，自带 1 次重试以应对上电后第一条命令被 MCU 吞掉。

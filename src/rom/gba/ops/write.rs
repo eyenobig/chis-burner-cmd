@@ -10,6 +10,7 @@ use super::delete::{chip_erase_profile, erase_chip, erase_sector, sector_erase_p
 use super::read::read_info;
 use crate::cartridge_link::CartridgeLink;
 use crate::profile;
+use crate::progress_display::{Phase, ProgressLog};
 use crate::rom::gba::data::{BurnOptions, BurnResult};
 
 pub const SECTOR: u64 = 0x20000; // 128KB
@@ -126,10 +127,22 @@ pub fn burn(
         };
         if !ok {
             res.first_bad = Some(0);
-        } else if let Some(fail) = program_flow(link, rom, 0, length, buf_wr, &mut res, length, progress) {
-            res.first_bad = Some(fail);
+        } else {
+            let mut write_plog = ProgressLog::new(Phase::Write);
+            let mut write_progress = |d: u64, t: u64| {
+                progress(d, t);
+                if write_plog.should_log(d, t) {
+                    log(&write_plog.format(d, t));
+                }
+            };
+            if let Some(fail) =
+                program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress)
+            {
+                res.first_bad = Some(fail);
+            }
         }
     } else {
+        let mut write_plog = ProgressLog::new(Phase::Write);
         let mut b = 0u64;
         while b < length {
             let end = (b + SECTOR).min(length);
@@ -142,8 +155,18 @@ pub fn burn(
                 res.first_bad = Some(b);
                 break;
             }
-            if let Some(fail) = program_flow(link, rom, b, end, buf_wr, &mut res, length, progress) {
-                res.first_bad = Some(fail);
+            // 临时放下 plog，先打 log，再包一层 progress（避免与 log 借用冲突）
+            let fail = {
+                let mut write_progress = |d: u64, t: u64| {
+                    progress(d, t);
+                    if write_plog.should_log(d, t) {
+                        log(&write_plog.format(d, t));
+                    }
+                };
+                program_flow(link, rom, b, end, buf_wr, &mut res, length, &mut write_progress)
+            };
+            if let Some(addr) = fail {
+                res.first_bad = Some(addr);
                 break;
             }
             b += SECTOR;
@@ -158,6 +181,7 @@ pub fn burn(
             if bad.is_empty() {
                 break;
             }
+            let mut write_plog = ProgressLog::new(Phase::Write);
             for bsec in bad {
                 let ok = match &prof {
                     Some(p) => sector_erase_profile(link, p, bsec as u32, 5),
@@ -165,7 +189,13 @@ pub fn burn(
                 };
                 if ok {
                     let end = (bsec + SECTOR).min(length);
-                    program_flow(link, rom, bsec, end, buf_wr, &mut res, length, progress);
+                    let mut write_progress = |d: u64, t: u64| {
+                        progress(d, t);
+                        if write_plog.should_log(d, t) {
+                            log(&write_plog.format(d, t));
+                        }
+                    };
+                    program_flow(link, rom, bsec, end, buf_wr, &mut res, length, &mut write_progress);
                 } else {
                     log(&format!("修复: 扇区 0x{bsec:08X} 擦除失败"));
                 }

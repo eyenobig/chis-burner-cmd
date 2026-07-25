@@ -75,25 +75,51 @@ impl CartridgeLink {
     }
 
     /// 关/重开串口并重新上电——用于 MCU 卡死后的复活。
-    /// `gbc=true` 时上 5V 并用 GB 总线复位（MBC 烧录/擦除/校验路径）。
+    /// `gbc=true` 时上 3.3V 并用 GB 总线复位（MBC 烧录/擦除/校验路径）。
     #[allow(dead_code)] // 供后续 burn 的卡死复活使用
     pub fn reconnect(&mut self) -> std::io::Result<()> {
         self.reconnect_as(false)
     }
 
-    /// 按总线类型重连：GBA→3.3V+`warm_up`；GB/MBC→5V+`gbc_warm_up`。
+    /// 按总线类型重连：GBA / GB/MBC 均 3.3V；`gbc` 仅切换 `gbc_warm_up` vs `warm_up`。
     pub fn reconnect_as(&mut self, gbc: bool) -> std::io::Result<()> {
         self.close();
         std::thread::sleep(Duration::from_millis(700));
         self.open()?;
+        self.power(1); // 3.3V（默认与烧录一致）
         if gbc {
-            self.power(2); // 5V
             self.gbc_warm_up();
         } else {
-            self.power(1); // 3.3V
             self.warm_up();
         }
         Ok(())
+    }
+
+    /// 软件等效「拔插 USB 串口」：卡带断电 → 关口 → 延时 → 重开（DTR/RTS）→ **3.3V** 时序 → warm_up。
+    ///
+    /// 仅 `power(0/1)` 不够：MCU/USB-CDC 会残留状态；物理插拔能好是因为 MCU+CDC 硬复位。
+    /// beggar_socket 每次 mission 都 `port.Close()` 再 `openPort()`，等价于本函数的关/开部分。
+    pub fn soft_unplug_3v3(&mut self) -> std::io::Result<()> {
+        if self.sp.is_some() {
+            self.power(0);
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        self.close();
+        std::thread::sleep(Duration::from_millis(900));
+        self.open()?;
+        // 断电 111ms → 3.3V 333ms（烧录不再短暂上 5V）
+        self.power(0);
+        std::thread::sleep(Duration::from_millis(111));
+        self.power(1); // 3.3V
+        std::thread::sleep(Duration::from_millis(333));
+        self.gbc_warm_up();
+        Ok(())
+    }
+
+    /// 兼容旧名：同 [`Self::soft_unplug_3v3`]。
+    #[inline]
+    pub fn soft_unplug(&mut self) -> std::io::Result<()> {
+        self.soft_unplug_3v3()
     }
 
     // DTR/RTS 置位再清零：重置单片机内的命令 buffer。

@@ -42,7 +42,7 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
                 mbc::ops::read::HeaderProbe::NoGame => None,
             };
             if let Some(raw) = raw {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 let _ = crate::config::save_selected(&port_name);
                 if json {
                     emit_mbc_info(&port_name, capacity, buffer, &raw);
@@ -58,7 +58,7 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
                 }
                 return ExitCode::SUCCESS;
             }
-            device::power_off(&mut link);
+            device::power_idle(&mut link);
             last_err = Some(i18n::t("info.no_cartridge"));
             continue;
         }
@@ -66,7 +66,7 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
         let flash = gba::ops::read_info(&mut link);
         let present = gba::ops::flash_present(&flash);
         if !present {
-            device::power_off(&mut link);
+            device::power_idle(&mut link);
             last_err = Some(i18n::t("info.no_cartridge"));
             continue;
         }
@@ -79,7 +79,7 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
                 None
             }
         };
-        device::power_off(&mut link);
+        device::power_idle(&mut link);
         let _ = crate::config::save_selected(&port_name);
 
         let kind = match header.as_ref() {
@@ -388,7 +388,8 @@ pub fn cmd_rom_info(json: bool, path: &str) -> ExitCode {
 
 // ==================== 写 / 删 / 导 命令 ====================
 
-/// 打开端口并按卡型上电（GBA=3.3V / MBC=5V，受 `voltage` 偏好覆盖）。GBA 额外 warm_up。
+/// 打开端口并按卡型上电（GBA/MBC 默认均 3.3V，受 `voltage` 偏好覆盖）。GBA 额外 warm_up。
+/// MBC 烧录路径内经 `soft_unplug_3v3` 做软件插拔（仍 3.3V），命令结束回 `power_idle`(3.3V)。
 fn open_powered(json: bool, cmd: &str, port: Option<String>, mbc: bool) -> Option<CartridgeLink> {
     let port = match device::resolve_port(port) {
         Some(p) => p,
@@ -439,13 +440,19 @@ fn log_emit(json: bool, m: &str) {
     }
 }
 
-fn progress_emit(json: bool, done: u64, total: u64, last_mb: &mut u64) {
+fn progress_emit(json: bool, done: u64, total: u64, last_tick: &mut u64) {
     if json {
-        emit(&Event::Progress { done, total });
+        // 扇区擦除 total 通常很小：每次都发。字节写入：每 4KiB（或首/末）发一次，避免逐字节刷爆 UI。
+        let sector_like = total > 0 && total < 4096;
+        let tick = if sector_like { done } else { done / 4096 };
+        if sector_like || done == 0 || done >= total || tick != *last_tick {
+            *last_tick = tick;
+            emit(&Event::Progress { done, total });
+        }
     } else {
         let mb = done / (1 << 20);
-        if mb != *last_mb {
-            *last_mb = mb;
+        if mb != *last_tick {
+            *last_tick = mb;
             println!("  {} / {} MB", mb, total / (1 << 20));
         }
     }
@@ -499,12 +506,13 @@ pub fn cmd_burn(
     let mut log = |m: &str| log_emit(json, m);
 
     let res = if mbc {
-        mbc::ops::write::burn(&mut link, &data, verify, &mut progress, &mut log)
+        // MBC：`--chip-erase` 传入；默认路径已对齐 tmp（整片+扇区），标志保持 CLI/客户端一致
+        mbc::ops::write::burn(&mut link, &data, verify, chip_erase, &mut progress, &mut log)
     } else {
         let opt = BurnOptions { chip_erase, unlock_ppb, verify };
         gba::ops::write::burn(&mut link, &data, &opt, &mut progress, &mut log)
     };
-    device::power_off(&mut link);
+    device::power_idle(&mut link);
     finish(json, "burn", res.success, res.bytes_written, res.mismatch_bytes, res.seconds)
 }
 
@@ -517,7 +525,7 @@ pub fn cmd_rtc_read(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
     if mbc {
         match mbc::ops::rtc::read_mbc3_rtc(&mut link) {
             Some(t) => {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 if json {
                     emit(&Event::RtcData {
                         ok: true,
@@ -539,7 +547,7 @@ pub fn cmd_rtc_read(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
                 ExitCode::SUCCESS
             }
             None => {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 op_err(json, "rtc", "RTC 读取失败");
                 ExitCode::from(3)
             }
@@ -547,7 +555,7 @@ pub fn cmd_rtc_read(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
     } else {
         match gba::ops::rtc::read_s3511(&mut link) {
             Some(t) => {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 if json {
                     emit(&Event::RtcData {
                         ok: true,
@@ -568,7 +576,7 @@ pub fn cmd_rtc_read(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
                 ExitCode::SUCCESS
             }
             None => {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 op_err(json, "rtc", "RTC 读取失败（无 GPIO 功能？）");
                 ExitCode::from(3)
             }
@@ -621,13 +629,14 @@ pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
         if sector_ok {
             true
         } else {
-            // 扇区路径失败时回落整片擦除，仍发 0/1→1/1 让客户端 drawer 有百分比
             log("扇区擦除失败，回落整片擦除...");
             progress(0, 1);
-            let chip_ok = mbc::ops::delete::erase_chip(&mut link, 240);
-            if chip_ok {
-                progress(1, 1);
-            }
+            let chip_ok = mbc::ops::delete::erase_chip_logged(
+                &mut link,
+                90,
+                &mut progress,
+                &mut log,
+            );
             chip_ok
         }
     } else {
@@ -669,7 +678,7 @@ pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
         }
     };
     let secs = t0.elapsed().as_secs_f64();
-    device::power_off(&mut link);
+    device::power_idle(&mut link);
     if json {
         log_emit(
             true,
@@ -704,7 +713,7 @@ pub fn cmd_dump(json: bool, port: Option<String>, out_path: &str, mbc: bool, len
         )
     };
     if len == 0 {
-        device::power_off(&mut link);
+        device::power_idle(&mut link);
         op_err(json, "dump", &i18n::t("op.no_size"));
         return ExitCode::from(3);
     }
@@ -716,7 +725,7 @@ pub fn cmd_dump(json: bool, port: Option<String>, out_path: &str, mbc: bool, len
     } else {
         gba::ops::export::dump(&mut link, len, out_path, &mut progress)
     };
-    device::power_off(&mut link);
+    device::power_idle(&mut link);
     match r {
         Ok(()) => finish(json, "dump", true, len, 0, 0.0),
         Err(e) => {
@@ -793,14 +802,14 @@ pub fn cmd_save_dump(
         let st = match mbc_save_type(st) {
             Ok(s) => s,
             Err(()) => {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 op_err(json, cmd, "MBC 不支持 FLASH 存档类型（用 sram / fram / batteryless）");
                 return ExitCode::from(2);
             }
         };
         if matches!(st, gba::data::SaveType::Batteryless) {
             let Some((kind, cfg)) = resolve_mbc_bl(&mut link) else {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 op_err(json, cmd, &i18n::t("save.not_found"));
                 return ExitCode::from(3);
             };
@@ -811,7 +820,7 @@ pub fn cmd_save_dump(
             let (kind, ram) = mbc_save_defaults(&mut link);
             let len = len_opt.unwrap_or(ram);
             if len == 0 {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 op_err(json, cmd, &i18n::t("op.no_size"));
                 return ExitCode::from(3);
             }
@@ -825,7 +834,7 @@ pub fn cmd_save_dump(
                 // 免电：需先 dump 出 ROM 镜像做魔数定位。用 CFI 容量决定读多长。
                 let dev_size = gba::ops::read_info(&mut link).device_size;
                 if dev_size == 0 {
-                    device::power_off(&mut link);
+                    device::power_idle(&mut link);
                     op_err(json, cmd, &i18n::t("op.no_size"));
                     return ExitCode::from(3);
                 }
@@ -843,7 +852,7 @@ pub fn cmd_save_dump(
             }
         }
     };
-    device::power_off(&mut link);
+    device::power_idle(&mut link);
     finish(json, cmd, res.success, res.bytes, res.mismatch_bytes, res.seconds)
 }
 
@@ -877,14 +886,14 @@ pub fn cmd_save_write(
         let st = match mbc_save_type(st) {
             Ok(s) => s,
             Err(()) => {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 op_err(json, cmd, "MBC 不支持 FLASH 存档类型（用 sram / fram / batteryless）");
                 return ExitCode::from(2);
             }
         };
         if matches!(st, gba::data::SaveType::Batteryless) {
             let Some((kind, cfg)) = resolve_mbc_bl(&mut link) else {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 op_err(json, cmd, &i18n::t("save.not_found"));
                 return ExitCode::from(3);
             };
@@ -902,7 +911,7 @@ pub fn cmd_save_write(
             gba::data::SaveType::Batteryless => {
                 let dev_size = gba::ops::read_info(&mut link).device_size;
                 if dev_size == 0 {
-                    device::power_off(&mut link);
+                    device::power_idle(&mut link);
                     op_err(json, cmd, &i18n::t("op.no_size"));
                     return ExitCode::from(3);
                 }
@@ -919,7 +928,7 @@ pub fn cmd_save_write(
             }
         }
     };
-    device::power_off(&mut link);
+    device::power_idle(&mut link);
     finish(json, cmd, res.success, res.bytes, res.mismatch_bytes, res.seconds)
 }
 
@@ -953,14 +962,14 @@ pub fn cmd_save_verify(
         let st = match mbc_save_type(st) {
             Ok(s) => s,
             Err(()) => {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 op_err(json, cmd, "MBC 不支持 FLASH 存档类型（用 sram / fram / batteryless）");
                 return ExitCode::from(2);
             }
         };
         if matches!(st, gba::data::SaveType::Batteryless) {
             let Some((kind, cfg)) = resolve_mbc_bl(&mut link) else {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 op_err(json, cmd, &i18n::t("save.not_found"));
                 return ExitCode::from(3);
             };
@@ -978,7 +987,7 @@ pub fn cmd_save_verify(
             gba::data::SaveType::Batteryless => {
                 let dev_size = gba::ops::read_info(&mut link).device_size;
                 if dev_size == 0 {
-                    device::power_off(&mut link);
+                    device::power_idle(&mut link);
                     op_err(json, cmd, &i18n::t("op.no_size"));
                     return ExitCode::from(3);
                 }
@@ -994,7 +1003,7 @@ pub fn cmd_save_verify(
             }
         }
     };
-    device::power_off(&mut link);
+    device::power_idle(&mut link);
     finish(json, cmd, res.success, res.bytes, res.mismatch_bytes, res.seconds)
 }
 
@@ -1021,14 +1030,14 @@ pub fn cmd_save_erase(
         let st = match mbc_save_type(st) {
             Ok(s) => s,
             Err(()) => {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 op_err(json, cmd, "MBC 不支持 FLASH 存档类型（用 sram / fram / batteryless）");
                 return ExitCode::from(2);
             }
         };
         if matches!(st, gba::data::SaveType::Batteryless) {
             let Some((kind, cfg)) = resolve_mbc_bl(&mut link) else {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 op_err(json, cmd, &i18n::t("save.not_found"));
                 return ExitCode::from(3);
             };
@@ -1042,7 +1051,7 @@ pub fn cmd_save_erase(
             let (kind, ram) = mbc_save_defaults(&mut link);
             let len = len_opt.unwrap_or(ram);
             if len == 0 {
-                device::power_off(&mut link);
+                device::power_idle(&mut link);
                 op_err(json, cmd, &i18n::t("op.no_size"));
                 return ExitCode::from(3);
             }
@@ -1064,14 +1073,14 @@ pub fn cmd_save_erase(
             gba::data::SaveType::Batteryless => {
                 let info = gba::ops::read_info(&mut link);
                 if info.device_size == 0 {
-                    device::power_off(&mut link);
+                    device::power_idle(&mut link);
                     op_err(json, cmd, &i18n::t("op.no_size"));
                     return ExitCode::from(3);
                 }
                 let buffer_write_bytes = info.buffer_write_bytes as u16;
                 let mirror = read_rom_mirror(&mut link, info.device_size, &mut progress);
                 let Some((off, size)) = gba::ops::save::batteryless_locate(&mirror) else {
-                    device::power_off(&mut link);
+                    device::power_idle(&mut link);
                     op_err(json, cmd, &i18n::t("save.not_found"));
                     return ExitCode::from(3);
                 };
@@ -1099,7 +1108,7 @@ pub fn cmd_save_erase(
             }
         }
     };
-    device::power_off(&mut link);
+    device::power_idle(&mut link);
     finish(json, cmd, res.success, res.bytes, res.mismatch_bytes, res.seconds)
 }
 

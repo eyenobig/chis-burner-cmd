@@ -27,6 +27,7 @@ mod event;
 mod gamedb;
 mod i18n;
 mod profile;
+mod progress_display;
 mod rom;
 
 use std::process::ExitCode;

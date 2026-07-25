@@ -14,7 +14,7 @@ use crate::rom::mbc::data::MbcKind;
 
 const PACKET: usize = 4096;
 
-/// 导出 `len` 字节 GB/GBC ROM 到 `path`。调用前应已上电（5V 视卡而定）。
+/// 导出 `len` 字节 GB/GBC ROM 到 `path`。调用前应已上电（默认 3.3V）。
 pub fn dump(
     link: &mut CartridgeLink,
     kind: MbcKind,

@@ -9,7 +9,7 @@
 //! - 8KiB 一个 bank：bank = ram_off >> 13，窗口 = 0xA000 + (ram_off & 0x1fff)
 //! - FRAM 用 `gbc_*_fram`，latency = 10
 //!
-//! ⚠️ reconnect 会把电压拉回 3.3V，故失败重连后需重上 5V + 重新使能 RAM + 重选 bank。
+//! ⚠️ reconnect_as(gbc) 上 3.3V + gbc_warm_up；失败重连后应按偏好/默认确认 3.3V + 重新使能 RAM + 重选 bank。
 //! ⚠️ 未经硬件测试（见根目录 TODO.md）。
 #![allow(dead_code)]
 
@@ -43,9 +43,13 @@ fn switch_ram_bank(link: &mut CartridgeLink, kind: MbcKind, bank: u32) {
     link.gbc_write(0x4000, &[b]);
 }
 
-/// reconnect 后的复位：重上 5V + 重新使能 RAM。
+/// reconnect 后的复位：按电压偏好/默认重上电 + 重新使能 RAM。
 fn rearm(link: &mut CartridgeLink, kind: MbcKind, bank: u32) {
     let _ = link.reconnect_as(true);
+    crate::device::power(
+        link,
+        crate::device::voltage_for(crate::rom::common::CartridgeKind::GbMbc),
+    );
     ram_enable(link);
     switch_ram_bank(link, kind, bank);
 }
@@ -66,7 +70,7 @@ fn read_chunk(link: &mut CartridgeLink, fram: bool, cart_addr: u32, out: &mut [u
     }
 }
 
-/// 导出 `len` 字节存档到 `path`。调用前应已上电（5V 视卡而定）+ `gbc_warm_up()`。
+/// 导出 `len` 字节存档到 `path`。调用前应已上电（默认 3.3V）+ `gbc_warm_up()`。
 pub fn dump(
     link: &mut CartridgeLink,
     kind: MbcKind,
@@ -240,7 +244,10 @@ fn read_rom_span(
         let b = &mut buf[..n];
         if !link.gbc_read(cartridge_addr, b) {
             let _ = link.reconnect();
-            crate::device::power(link, crate::device::data::Voltage::V5);
+            crate::device::power(
+                link,
+                crate::device::voltage_for(crate::rom::common::CartridgeKind::GbMbc),
+            );
             link.gbc_warm_up();
             switch_bank(link, bank as u32, kind);
             continue;

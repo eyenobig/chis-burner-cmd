@@ -20,12 +20,13 @@ use crate::{config, i18n};
 
 /// 识别卡带所需电压。
 /// - GBA / 未知：恒 3.3V（不读存档——GBA 在 5V 下会损坏，电压偏好对它无意义）。
-/// - GB/GBC(MBC)：优先用 `voltage` 命令记住的偏好（存档），否则默认 5V。
+/// - GB/GBC(MBC)：优先用 `voltage` 命令记住的偏好（存档），否则默认 3.3V。
+///   （空闲与烧录均 3.3V；软件插拔时序也走 3.3V，不再 mission 内短暂切 5V。）
 pub fn voltage_for(kind: CartridgeKind) -> Voltage {
     match kind {
         CartridgeKind::GbMbc => config::load_voltage()
             .and_then(|s| Voltage::from_user(&s))
-            .unwrap_or(Voltage::V5),
+            .unwrap_or(Voltage::V3_3),
         _ => Voltage::V3_3,
     }
 }
@@ -33,6 +34,11 @@ pub fn voltage_for(kind: CartridgeKind) -> Voltage {
 /// 给卡带上指定电压。
 pub fn power(link: &mut CartridgeLink, v: Voltage) {
     link.power(v.code());
+}
+
+/// 空闲供电：确认 3.3V。
+pub fn power_idle(link: &mut CartridgeLink) {
+    link.power(Voltage::V3_3.code());
 }
 
 /// 断电。
