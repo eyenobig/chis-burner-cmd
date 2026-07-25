@@ -48,7 +48,7 @@ cargo run -- --lang en detect
 | `voltage [3v3\|5v\|off\|auto]` | 记住/查看供电电压偏好（持久化） | ✅ 已实现 |
 | `info [--mbc]` | 读 flash + 卡带/游戏信息（ID/容量、GBA/GB 判别、标题、MBC 类型、RTC、头校验，[文档](docs/read-id.md)） | ✅ GBA 已验证；GB live 读取已实现 |
 | `rom-info --file <f>` | **离线**解析 GBA/GB·GBC ROM 文件头（不接烧录器），支持人类可读及 `--json` 输出 | ✅ 已验证 |
-| `burn --rom <f> [--mbc] [--chip-erase] [--no-ppb] [--no-verify]` | 写入 ROM（GBA / GB·GBC，MBC3/MBC5 按头 `0x147` 自动识别，默认读回校验） | ✅ 已验证 |
+| `burn --rom <f> [--mbc] [--sector] [--no-ppb] [--no-verify]` | 写入 ROM（GBA 默认整片擦后连续写；`--sector` 逐扇区；MBC3/MBC5 按头识别；默认读回校验） | ✅ 已验证 |
 | `erase [--mbc]` | 清空 ROM（整片擦除） | ✅ 已验证 |
 | `dump --out <f> [--mbc] [--len N]` | 导出 ROM 到文件 | ✅ 已验证 |
 | `rtc [--mbc]` | 读卡带 RTC（GBA/S3511、MBC3） | ✅ 已验证 |

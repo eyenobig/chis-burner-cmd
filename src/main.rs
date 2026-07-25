@@ -109,12 +109,13 @@ fn main() -> ExitCode {
             None => arg_required(json, "rom-info", "op.no_rom"),
         },
         "burn" | "write" => match opt_value(&args, "--rom") {
+            // GBA 默认整片擦后连续写（对齐 WinForms / tmp 成功路径）；`--sector` 才逐扇区。
             Some(f) => rom::cmd_burn(
                 json,
                 port,
                 &f,
                 mbc,
-                has_flag(&args, "--chip-erase"),
+                !has_flag(&args, "--sector"),
                 !has_flag(&args, "--no-ppb"),
                 !has_flag(&args, "--no-verify"),
             ),

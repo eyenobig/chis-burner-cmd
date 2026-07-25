@@ -21,7 +21,7 @@ pub const BAUD: u32 = 9600;
 pub struct CartridgeLink {
     port_name: String,
     sp: Option<Box<dyn SerialPort>>,
-    /// 单次应答超时。USB 正常应答是毫秒级，超时即认为这一包应答丢失。
+    /// 单次应答超时。对齐 WinForms `responTimeoutMs=3000`（Core/旧 cfb 曾用 800，大 ROM 易误判）。
     response_timeout: Duration,
 }
 
@@ -39,7 +39,7 @@ impl CartridgeLink {
         Self {
             port_name: port.to_string(),
             sp: None,
-            response_timeout: Duration::from_millis(800),
+            response_timeout: Duration::from_millis(3000),
         }
     }
 
@@ -89,6 +89,24 @@ impl CartridgeLink {
         Ok(())
     }
 
+    /// 软件等效「拔插」后上 **3.3V** + GBA `warm_up`。
+    /// 对齐 beggar_socket：每次 GBA mission 关口再开，清 MCU/总线残留。
+    pub fn soft_unplug_gba(&mut self) -> std::io::Result<()> {
+        if self.sp.is_some() {
+            self.power(0);
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        self.close();
+        std::thread::sleep(Duration::from_millis(900));
+        self.open()?;
+        self.power(0);
+        std::thread::sleep(Duration::from_millis(111));
+        self.power(1);
+        std::thread::sleep(Duration::from_millis(333));
+        self.warm_up();
+        Ok(())
+    }
+
     /// 软件等效「拔插 USB 串口」：卡带断电 → 关口 → 延时 → 重开（DTR/RTS）→ **3.3V** 时序 → warm_up。
     ///
     /// 仅 `power(0/1)` 不够：MCU/USB-CDC 会残留状态；物理插拔能好是因为 MCU+CDC 硬复位。
@@ -118,6 +136,14 @@ impl CartridgeLink {
             let _ = sp.write_request_to_send(false);
             let _ = sp.write_data_terminal_ready(false);
         }
+    }
+
+    /// 对齐 `cart_adapter.resetMcuBuffer`：丢弃缓冲 + DTR/RTS，**不断电不开口**。
+    pub fn reset_mcu_buffer(&mut self) {
+        self.discard_all();
+        self.toggle_reset_lines();
+        std::thread::sleep(Duration::from_millis(20));
+        self.discard_all();
     }
 
     fn discard_all(&mut self) {
@@ -261,8 +287,8 @@ impl CartridgeLink {
         self.read_data_bytes(id8)
     }
 
-    /// rom 编程(缓冲写)，地址为“字节”地址（cmd 0xf4）。
-    pub fn rom_program(&mut self, byte_addr: u32, data: &[u8], buffer_write_bytes: u16) -> bool {
+    /// rom 编程单次发包（无重试），地址为“字节”地址（cmd 0xf4）。
+    pub fn rom_program_once(&mut self, byte_addr: u32, data: &[u8], buffer_write_bytes: u16) -> bool {
         let mut pl = vec![0u8; 7 + data.len()];
         pl[0] = 0xf4;
         pl[1..5].copy_from_slice(&addr4(byte_addr));
@@ -273,6 +299,17 @@ impl CartridgeLink {
             return false;
         }
         self.read_ack()
+    }
+
+    /// rom 编程(缓冲写)：对齐 WinForms，最多 4 次，失败只 `reset_mcu_buffer`（不做关口 reconnect）。
+    pub fn rom_program(&mut self, byte_addr: u32, data: &[u8], buffer_write_bytes: u16) -> bool {
+        for _ in 0..4 {
+            if self.rom_program_once(byte_addr, data, buffer_write_bytes) {
+                return true;
+            }
+            self.reset_mcu_buffer();
+        }
+        false
     }
 
     /// 全片擦除命令（仅下发，不等待完成；cmd 0xf1）。
@@ -311,7 +348,7 @@ impl CartridgeLink {
     }
 
     /// GB 卡 ROM 编程(缓冲写)（cmd 0xfc）。
-    /// 单包可达 4KiB（固件内按 buffer 切分轮询 DQ），默认 800ms 读超时偏紧，这里临时放宽。
+    /// 单包可达 4KiB（固件内按 buffer 切分轮询 DQ）；显式保证 ≥3000ms 应答窗。
     pub fn gbc_rom_program(&mut self, addr: u32, data: &[u8], buffer_write_bytes: u16) -> bool {
         let save = self.response_timeout;
         self.response_timeout = Duration::from_millis(3_000);

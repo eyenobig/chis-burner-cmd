@@ -25,7 +25,7 @@ pub fn erase_chip(link: &mut CartridgeLink, timeout_secs: u64) -> bool {
     }
 }
 
-/// 扇区擦除（byte_base 须扇区对齐）。失败自动重连重试。
+/// 扇区擦除（byte_base 须扇区对齐）。失败仅 DTR/RTS 复位重试（不对关口 reconnect）。
 pub fn erase_sector(link: &mut CartridgeLink, byte_base: u32, retries: u32) -> bool {
     let mut probe = [0u8; 2];
     for _ in 0..retries {
@@ -46,7 +46,7 @@ pub fn erase_sector(link: &mut CartridgeLink, byte_base: u32, retries: u32) -> b
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        let _ = link.reconnect();
+        link.reset_mcu_buffer();
     }
     false
 }
@@ -86,11 +86,47 @@ pub fn erase_range_logged(
 }
 
 /// All PPB Erase：清除全部扇区的持久保护位（上半区写不进时多半因 PPB）。
+///
+/// 对齐 `mission_tools.cs` / `GbaFlasher.UnlockAllPpb`：先查 PPB Lock，再 All PPB Erase。
 pub fn unlock_all_ppb(link: &mut CartridgeLink) {
+    unlock_all_ppb_logged(link, &mut |_| {});
+}
+
+/// 同上，可把 Lock 状态等诊断写入 `log`。
+pub fn unlock_all_ppb_logged(link: &mut CartridgeLink, log: &mut dyn FnMut(&str)) {
     // 退出任何命令集
     link.rom_write(0, &[0x90, 0x00]);
     link.rom_write(0, &[0x00, 0x00]);
     link.rom_write(0, &[0xf0, 0x00]);
+
+    // Global Non-Volatile Sector Protection Freeze Command Set — 读 PPB Lock
+    link.rom_write(0x555, &[0xaa, 0x00]);
+    link.rom_write(0x2aa, &[0x55, 0x00]);
+    link.rom_write(0x555, &[0x50, 0x00]);
+    let mut lock = [0u8; 2];
+    let _ = link.rom_read(0, &mut lock);
+    link.rom_write(0, &[0x90, 0x00]);
+    link.rom_write(0, &[0x00, 0x00]);
+    link.rom_write(0, &[0xf0, 0x00]);
+    let lock_u16 = u16::from_le_bytes(lock);
+    log(&format!("PPB Lock Status: 0x{lock_u16:04X}"));
+    if lock[0] != 1 {
+        log("警告: PPB Lock 非 1，All PPB Erase 可能无效（扇区持久保护无法清除）");
+    }
+
+    // 读扇区 0 与 0x400000 的 PPB（1=未保护，0=保护）
+    for &sa in &[0u32, 0x40_0000] {
+        link.rom_write(0x555, &[0xaa, 0x00]);
+        link.rom_write(0x2aa, &[0x55, 0x00]);
+        link.rom_write(0x555, &[0xc0, 0x00]);
+        let mut ppb = [0u8; 2];
+        let _ = link.rom_read(sa, &mut ppb);
+        link.rom_write(0, &[0x90, 0x00]);
+        link.rom_write(0, &[0x00, 0x00]);
+        link.rom_write(0, &[0xf0, 0x00]);
+        log(&format!("PPB @0x{sa:08X}: 0x{:04X}", u16::from_le_bytes(ppb)));
+    }
+
     // 进入非易失扇区保护命令集并 All PPB Erase
     link.rom_write(0x555, &[0xaa, 0x00]);
     link.rom_write(0x2aa, &[0x55, 0x00]);
@@ -101,6 +137,20 @@ pub fn unlock_all_ppb(link: &mut CartridgeLink) {
     link.rom_write(0, &[0x90, 0x00]);
     link.rom_write(0, &[0x00, 0x00]);
     link.rom_write(0, &[0xf0, 0x00]);
+
+    // 再读 0x400000 PPB，确认是否清掉
+    link.rom_write(0x555, &[0xaa, 0x00]);
+    link.rom_write(0x2aa, &[0x55, 0x00]);
+    link.rom_write(0x555, &[0xc0, 0x00]);
+    let mut ppb2 = [0u8; 2];
+    let _ = link.rom_read(0x40_0000, &mut ppb2);
+    link.rom_write(0, &[0x90, 0x00]);
+    link.rom_write(0, &[0x00, 0x00]);
+    link.rom_write(0, &[0xf0, 0x00]);
+    log(&format!(
+        "PPB @0x00400000 after erase: 0x{:04X}",
+        u16::from_le_bytes(ppb2)
+    ));
 }
 
 // ============ profile 驱动的擦除（命中 profile 时走命令序列，否则用上面的硬编码）============
@@ -109,7 +159,7 @@ pub fn unlock_all_ppb(link: &mut CartridgeLink) {
 pub fn chip_erase_profile(link: &mut CartridgeLink, p: &crate::profile::Profile, timeout_secs: u64) -> bool {
     let timeout = p.chip_erase_timeout.max(timeout_secs);
     if let Some(seq) = p.chip_erase() {
-        // run_gba 内部已含每条 cmd 的 wait_for；失败则重连重试。
+        // run_gba 含 wait_for；整片擦耗时长，失败用关口重连清总线，再试。
         for _ in 0..3 {
             if crate::profile::run_gba(link, &seq, 0) {
                 return true;
@@ -129,7 +179,7 @@ pub fn sector_erase_profile(link: &mut CartridgeLink, p: &crate::profile::Profil
             if crate::profile::run_gba(link, &seq, byte_base) {
                 return true;
             }
-            let _ = link.reconnect();
+            link.reset_mcu_buffer();
         }
         false
     } else {

@@ -18,6 +18,18 @@
 
 ## [Unreleased]
 
+## [v0.3.3] - 2026-07-26
+
+### 变更
+
+- **GBA 烧录对齐 beggar 稳定路径**：应答超时 3000ms；默认整片擦后连续写（`--sector` 才逐扇区）；烧前 `soft_unplug_gba`；`rom_program` 失败走 DTR/RTS 复位重试（最多 4 次），不再频繁关口 reconnect。
+- **profile 地址按字节空间**：AGB flashGBX 序列 `0xAAA`/`0x555` 按字节解析再 `>> 1` 写总线；内置 `s29gl.json` 地址同步修正。
+- **ChisFlash 命名**：S29GL256 profile 显示名改为 ChisFlash，保留 insideGadgets 别名；多 ID 命中时优先 ChisFlash。
+
+### 修复
+
+- **整片擦超时**：固件 `0xf1` 优先，超时放宽到 240s；profile 软件擦作回落，避免大片擦未完成即进入编程。
+
 ## [v0.3.2] - 2026-07-25
 
 ### 变更

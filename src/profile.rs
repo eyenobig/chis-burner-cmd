@@ -290,9 +290,26 @@ fn parse_one(src: &str, _label: &str) -> Option<Profile> {
 }
 
 /// 按 8 字节 Autoselect ID 的前 4 字节匹配 profile。
+///
+/// 多条同 ID 时优先 **ChisFlash** 名称（本机卡带品牌），其次带明确容量的
+/// FlashGBX/iG 条目，避免命中笼统的「GBA 默认」回落 profile。
 pub fn match_by_id<'a>(profiles: &'a [Profile], id: &[u8; 8]) -> Option<&'a Profile> {
     let key = [id[0], id[1], id[2], id[3]];
-    profiles.iter().find(|p| p.id_keys().contains(&key))
+    let mut hits: Vec<&Profile> = profiles.iter().filter(|p| p.id_keys().contains(&key)).collect();
+    if hits.is_empty() {
+        return None;
+    }
+    hits.sort_by_key(|p| {
+        let name = p.name.to_ascii_lowercase();
+        let chis = !name.contains("chisflash");
+        // flash_size 为具体数字时更优先于 0 / 空
+        let sized = match &p.flash_size {
+            serde_json::Value::Number(n) => n.as_u64().unwrap_or(0) == 0,
+            _ => true,
+        };
+        (chis, sized, p.name.as_str())
+    });
+    Some(hits[0])
 }
 
 /// 解析一条命令的地址/值为真实 (addr, val)。
@@ -317,17 +334,19 @@ fn resolve(cmd: &(CmdAddr, CmdVal), sa: u32, pa: u32, pd: u8) -> Option<(u32, u8
     Some((addr, val))
 }
 
-/// 在 GBA 总线执行一段序列（地址为字地址，走 rom_write 写 [val,0x00]）。
-/// `sa`=扇区基址（字节地址，会除 2 转字地址用于 SA 占位符——与 cfb erase_sector 一致）。
+/// 在 GBA 总线执行一段序列。
+///
+/// flashGBX AGB profile 里的地址一律是**字节地址**（如 unlock `0xAAA`/`0x555`，
+/// 与硬编码 `erase_sector` 的字地址 `0x555`/`0x2AA` 对应：`byte >> 1`）。
+/// `rom_write` 吃字地址，故字面地址与 `SA` 都先按字节解析再 `>> 1`。
 pub fn run_gba(link: &mut CartridgeLink, seq: &SeqFull, sa_byte: u32) -> bool {
-    let sa_word = sa_byte >> 1; // cfb rom_write 用字地址
     for (i, cmd) in seq.cmds.iter().enumerate() {
-        let Some((addr, val)) = resolve(cmd, sa_word, 0, 0) else { return false };
-        if !link.rom_write(addr, &[val, 0x00]) {
+        let Some((addr_byte, val)) = resolve(cmd, sa_byte, 0, 0) else { return false };
+        if !link.rom_write(addr_byte >> 1, &[val, 0x00]) {
             return false;
         }
         if let Some(wait) = seq.waits.get(i) {
-            if !poll_gba(link, wait, sa_word) {
+            if !poll_gba(link, wait, sa_byte) {
                 return false;
             }
         }
@@ -351,11 +370,11 @@ pub fn run_dmg(link: &mut CartridgeLink, seq: &SeqFull, sa: u32) -> bool {
     true
 }
 
-/// GBA 轮询：地址当字地址（SA 占位符用扇区字地址），读 2 字节判 lo<=v<=hi。
-fn poll_gba(link: &mut CartridgeLink, w: &WaitRow, sa_word: u32) -> bool {
+/// GBA 轮询：profile 地址为字节地址（与 `run_gba` 一致）；`rom_read` 也吃字节地址。
+fn poll_gba(link: &mut CartridgeLink, w: &WaitRow, sa_byte: u32) -> bool {
     let Some(addr) = &w.addr else { return true };
-    let addr_word = match addr {
-        WaitAddr::Sa => sa_word,
+    let addr_byte = match addr {
+        WaitAddr::Sa => sa_byte,
         WaitAddr::Lit(n) => *n,
     };
     let lo = w.lo.map(|n| n.0 as u16);
@@ -363,7 +382,7 @@ fn poll_gba(link: &mut CartridgeLink, w: &WaitRow, sa_word: u32) -> bool {
     let start = Instant::now();
     let mut probe = [0u8; 2];
     loop {
-        if link.rom_read(addr_word << 1, &mut probe) {
+        if link.rom_read(addr_byte, &mut probe) {
             let v = u16::from_le_bytes(probe);
             if lo.is_none_or(|l| v >= l) && hi.is_none_or(|h| v <= h) {
                 return true;
@@ -537,5 +556,24 @@ mod tests {
         assert!(hit.is_some(), "应匹配到内置 S29GL");
         // 未知 ID 不命中。
         assert!(match_by_id(&profiles, &[0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0]).is_none());
+    }
+
+    #[test]
+    fn agb_s29gl_unlock_addrs_are_byte_space() {
+        // flashGBX AGB：0xAAA/0x555（字节）≡ 硬编码 erase_sector 的字地址 0x555/0x2AA。
+        let profiles = load_all();
+        let p = match_by_id(&profiles, &[0x01, 0x00, 0x7E, 0x22, 0x22, 0x22, 0x01, 0x22])
+            .expect("ChisFlash / S29GL256");
+        assert!(
+            p.name.to_ascii_lowercase().contains("chisflash"),
+            "应优先命中 ChisFlash profile，实际: {}",
+            p.name
+        );
+        let se = p.sector_erase().expect("sector_erase");
+        assert!(matches!(&se.cmds[0].0, CmdAddr::Lit(0xAAA)));
+        assert!(matches!(&se.cmds[1].0, CmdAddr::Lit(0x555)));
+        // run_gba 必须 byte>>1 后才与 GbaFlasher.EraseSector 一致
+        assert_eq!(0xAAA_u32 >> 1, 0x555);
+        assert_eq!(0x555_u32 >> 1, 0x2AA);
     }
 }

@@ -388,8 +388,8 @@ pub fn cmd_rom_info(json: bool, path: &str) -> ExitCode {
 
 // ==================== 写 / 删 / 导 命令 ====================
 
-/// 打开端口并按卡型上电（GBA/MBC 默认均 3.3V，受 `voltage` 偏好覆盖）。GBA 额外 warm_up。
-/// MBC 烧录路径内经 `soft_unplug_3v3` 做软件插拔（仍 3.3V），命令结束回 `power_idle`(3.3V)。
+/// 打开端口并按卡型上电。GBA **恒 3.3V**（无视 `voltage` 偏好）；MBC 读偏好否则默认 3.3V。
+/// GBA 额外 `warm_up`。MBC 烧录路径内经 `soft_unplug_3v3`；命令结束回 `power_idle`(3.3V)。
 fn open_powered(json: bool, cmd: &str, port: Option<String>, mbc: bool) -> Option<CartridgeLink> {
     let port = match device::resolve_port(port) {
         Some(p) => p,
@@ -501,14 +501,23 @@ pub fn cmd_burn(
         return ExitCode::from(3);
     };
 
+    // GBA：对齐 beggar_socket，每次 mission 软件插拔清 MCU 残留后再烧。
+    if !mbc {
+        if let Err(e) = link.soft_unplug_gba() {
+            op_err(json, "burn", &format!("GBA 软件插拔失败: {e}"));
+            return ExitCode::from(3);
+        }
+    }
+
     let mut last_mb = u64::MAX;
     let mut progress = |d: u64, t: u64| progress_emit(json, d, t, &mut last_mb);
     let mut log = |m: &str| log_emit(json, m);
 
     let res = if mbc {
-        // MBC：`--chip-erase` 传入；默认路径已对齐 tmp（整片+扇区），标志保持 CLI/客户端一致
+        // MBC：默认路径已是整片+扇区；`chip_erase` 标志与 GBA/CLI 对齐（MBC 侧忽略）
         mbc::ops::write::burn(&mut link, &data, verify, chip_erase, &mut progress, &mut log)
     } else {
+        // GBA：默认 chip_erase=true（整片擦后连续写）；`--sector` 传入 false
         let opt = BurnOptions { chip_erase, unlock_ppb, verify };
         gba::ops::write::burn(&mut link, &data, &opt, &mut progress, &mut log)
     };

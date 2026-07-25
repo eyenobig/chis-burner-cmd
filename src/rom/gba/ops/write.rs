@@ -1,11 +1,14 @@
 //! GBA · 写：编程 / 烧录 ROM。
 //!
-//! 从参考源 `GbaFlasher.cs` 的 `ProgramFlow` / `FindBadSectors` / `Burn` 复刻。
-//! 健壮性：每包必须 ACK 才前进，连续无应答则 `reconnect` 复活后重试；烧后逐扇区校验+修复。
+//! 对齐 beggar_socket WinForms（`mission_eraseChip` + `mission_programRom`）稳定路径：
+//! 默认整片擦后连续写；编程失败仅 DTR/RTS 复位重试（见 `CartridgeLink::rom_program`），
+//! 不做 Core 式频繁关口 reconnect。保留 FlashGBX profile、PPB、校验修复。
 
 use std::time::Instant;
 
-use super::delete::{chip_erase_profile, erase_chip, erase_sector, sector_erase_profile, unlock_all_ppb};
+use super::delete::{
+    chip_erase_profile, erase_chip, erase_sector, sector_erase_profile, unlock_all_ppb_logged,
+};
 use super::read::read_info;
 use crate::cartridge_link::CartridgeLink;
 use crate::profile;
@@ -14,8 +17,10 @@ use crate::rom::gba::data::{BurnOptions, BurnResult, SECTOR};
 
 const PACKET: usize = 4096;
 const SECTOR_U64: u64 = SECTOR as u64;
+/// 整片擦除兜底超时（秒）；对齐临时成功路径 / WinForms。
+const CHIP_ERASE_TIMEOUT_SECS: u64 = 240;
 
-/// 编程 [from,to)；每包必须 ACK 才前进，连续失败重连复活。返回首个失败地址或 None(完成)。
+/// 连续编程 [from,to)。`rom_program` 内已 4× DTR；包失败即停。返回首个失败地址或 None。
 fn program_flow(
     link: &mut CartridgeLink,
     rom: &[u8],
@@ -31,19 +36,8 @@ fn program_flow(
         let len = ((to - pos) as usize).min(PACKET);
         let pk = &rom[pos as usize..pos as usize + len];
 
-        let mut tries = 0;
-        loop {
-            if link.rom_program(pos as u32, pk, buf_wr) {
-                break;
-            }
-            tries += 1;
-            if tries % 5 == 0 {
-                res.reconnects += 1;
-                let _ = link.reconnect();
-            }
-            if tries >= 60 {
-                return Some(pos);
-            }
+        if !link.rom_program(pos as u32, pk, buf_wr) {
+            return Some(pos);
         }
 
         pos += len as u64;
@@ -64,7 +58,7 @@ fn find_bad_sectors(link: &mut CartridgeLink, rom: &[u8], total: u64) -> (Vec<u6
         let len = ((total - pos) as usize).min(PACKET);
         let b = &mut buf[..len];
         if !link.rom_read(pos as u32, b) {
-            let _ = link.reconnect();
+            link.reset_mcu_buffer();
             continue;
         }
         for i in 0..len {
@@ -79,6 +73,8 @@ fn find_bad_sectors(link: &mut CartridgeLink, rom: &[u8], total: u64) -> (Vec<u6
 }
 
 /// 完整烧录：(可选解锁PPB) → (整片或逐扇区)擦除+编程 → 校验+修复。
+///
+/// 默认 `chip_erase=true`（整片擦后连续写）；`--sector` 走逐扇区即擦即写。
 pub fn burn(
     link: &mut CartridgeLink,
     rom: &[u8],
@@ -97,8 +93,19 @@ pub fn burn(
     };
     let start = Instant::now();
 
+    // 常见 GBA NOR 厂商标识；总线乱读时 ID 会像 `00 03 42…`，不应当有效芯片。
+    let id_sane = |id: &[u8; 8]| {
+        matches!(id[0], 0x01 | 0xC2 | 0x20 | 0x89 | 0x2C | 0xBF | 0x1C | 0x37 | 0xEC)
+            && !id.iter().all(|&b| b == 0x00 || b == 0xFF)
+    };
+
     let mut buf_wr: u16 = 32; // S29GL256 默认；CFI 可覆盖
-    let info = read_info(link);
+    let mut info = read_info(link);
+    if info.id.as_ref().is_none_or(|id| !id_sane(id)) {
+        log("芯片 ID 异常，软件插拔后重读 ...");
+        let _ = link.soft_unplug_gba();
+        info = read_info(link);
+    }
     if info.buffer_write_bytes > 0 {
         buf_wr = info.buffer_write_bytes as u16;
     }
@@ -111,22 +118,34 @@ pub fn burn(
     });
     if let Some(p) = &prof {
         log(&format!("Profile: {} ({})", p.name, p.kind_label()));
+    } else if info.id.as_ref().is_none_or(|id| !id_sane(id)) {
+        log("未识别到有效 flash ID，中止烧录（请重插卡带）");
+        res.first_bad = Some(0);
+        res.seconds = start.elapsed().as_secs_f64();
+        return res;
     }
 
     if opt.unlock_ppb {
         log("解锁 PPB (All PPB Erase) ...");
-        unlock_all_ppb(link);
+        unlock_all_ppb_logged(link, log);
+        // PPB 命令集退出后再 F0，避免残留保护态影响擦写
+        let _ = link.rom_write(0, &[0xf0, 0x00]);
     }
 
     if opt.chip_erase {
         log("整片擦除 ...");
-        let ok = match &prof {
-            Some(p) => chip_erase_profile(link, p, 200),
-            None => erase_chip(link, 200),
-        };
+        // 对齐 WinForms/tmp：优先固件 0xf1（实测 ~1–2 分钟）；profile 软件擦仅作回落。
+        // 若先走 profile，WAIT_TIMEOUT(30s) 不够大片擦完，会把 flash 留在擦除态再拖垮固件擦。
+        let ok = erase_chip(link, CHIP_ERASE_TIMEOUT_SECS)
+            || match &prof {
+                Some(p) => chip_erase_profile(link, p, CHIP_ERASE_TIMEOUT_SECS),
+                None => false,
+            };
         if !ok {
+            log("整片擦除失败");
             res.first_bad = Some(0);
         } else {
+            log("开始写入（整片擦后连续编程，对齐 WinForms mission_programRom）");
             let mut write_plog = ProgressLog::new(Phase::Write);
             let mut write_progress = |d: u64, t: u64| {
                 progress(d, t);
@@ -137,16 +156,21 @@ pub fn burn(
             if let Some(fail) =
                 program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress)
             {
+                log(&format!("写入失败 @0x{fail:08X}（已 DTR 重试×4）"));
                 res.first_bad = Some(fail);
             }
         }
     } else {
+        log("逐扇区即擦即写（--sector）");
         let mut write_plog = ProgressLog::new(Phase::Write);
         let mut b = 0u64;
         while b < length {
             let end = (b + SECTOR_U64).min(length);
+            // profile 序列（FlashGBX 字节地址经 run_gba >>1）优先；失败回落 beggar_socket 硬编码。
             let ok = match &prof {
-                Some(p) => sector_erase_profile(link, p, b as u32, 5),
+                Some(p) => {
+                    sector_erase_profile(link, p, b as u32, 5) || erase_sector(link, b as u32, 5)
+                }
                 None => erase_sector(link, b as u32, 5),
             };
             if !ok {
@@ -165,6 +189,7 @@ pub fn burn(
                 program_flow(link, rom, b, end, buf_wr, &mut res, length, &mut write_progress)
             };
             if let Some(addr) = fail {
+                log(&format!("写入失败 @0x{addr:08X}（已 DTR 重试×4）"));
                 res.first_bad = Some(addr);
                 break;
             }
@@ -183,7 +208,10 @@ pub fn burn(
             let mut write_plog = ProgressLog::new(Phase::Write);
             for bsec in bad {
                 let ok = match &prof {
-                    Some(p) => sector_erase_profile(link, p, bsec as u32, 5),
+                    Some(p) => {
+                        sector_erase_profile(link, p, bsec as u32, 5)
+                            || erase_sector(link, bsec as u32, 5)
+                    }
                     None => erase_sector(link, bsec as u32, 5),
                 };
                 if ok {
@@ -194,7 +222,18 @@ pub fn burn(
                             log(&write_plog.format(d, t));
                         }
                     };
-                    program_flow(link, rom, bsec, end, buf_wr, &mut res, length, &mut write_progress);
+                    if let Some(fail) = program_flow(
+                        link,
+                        rom,
+                        bsec,
+                        end,
+                        buf_wr,
+                        &mut res,
+                        length,
+                        &mut write_progress,
+                    ) {
+                        log(&format!("修复写入失败 @0x{fail:08X}"));
+                    }
                 } else {
                     log(&format!("修复: 扇区 0x{bsec:08X} 擦除失败"));
                 }

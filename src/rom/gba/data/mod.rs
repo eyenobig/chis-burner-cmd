@@ -41,7 +41,7 @@ pub struct GbaHeader {
 
 /// 烧录选项。
 pub struct BurnOptions {
-    /// 整片擦除（否则逐扇区即擦即写）。
+    /// 整片擦除后连续写（默认 true，对齐 WinForms）；false=逐扇区即擦即写（`--sector`）。
     pub chip_erase: bool,
     /// 开始前自动解锁 PPB。
     pub unlock_ppb: bool,
