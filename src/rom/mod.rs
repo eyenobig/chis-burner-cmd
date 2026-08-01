@@ -442,9 +442,11 @@ fn log_emit(json: bool, m: &str) {
 
 fn progress_emit(json: bool, done: u64, total: u64, last_tick: &mut u64) {
     if json {
-        // 扇区擦除 total 通常很小：每次都发。字节写入：每 4KiB（或首/末）发一次，避免逐字节刷爆 UI。
+        // 扇区擦除/整片擦除心跳 total 通常很小（扇区数 / 秒数）：每次都发。
+        // 字节写入/校验/导出：按 total 自适应量化粒度，既避免逐包刷爆 UI，又保证
+        // 进度均匀——MBC 的 256B 包和 GBA 的 4KiB 包都能在合理间隔内各发一次。
         let sector_like = total > 0 && total < 4096;
-        let tick = if sector_like { done } else { done / 4096 };
+        let tick = if sector_like { done } else { done / tick_step(total) };
         if sector_like || done == 0 || done >= total || tick != *last_tick {
             *last_tick = tick;
             emit(&Event::Progress { done, total });
@@ -455,6 +457,20 @@ fn progress_emit(json: bool, done: u64, total: u64, last_tick: &mut u64) {
             *last_tick = mb;
             println!("  {} / {} MB", mb, total / (1 << 20));
         }
+    }
+}
+
+/// 字节进度量化步长：按 total 分档，大 ROM 步长大（控事件数），小 ROM 步长小（保均匀）。
+/// - 256B 包（MBC）：2KiB 步长 → 每 8 包发一次；4KiB 包（GBA）：2KiB 步长 → 每包都发。
+/// - 大 ROM（≥1MB）：16KiB 步长，4MB 全程约 256 个事件，不刷爆 stdout/UI。
+fn tick_step(total: u64) -> u64 {
+    const KIB: u64 = 1024;
+    if total >= 1024 * KIB {
+        16 * KIB
+    } else if total >= 256 * KIB {
+        8 * KIB
+    } else {
+        2 * KIB
     }
 }
 
@@ -480,7 +496,7 @@ fn finish(json: bool, cmd: &str, ok: bool, bytes: u64, mm: u32, secs: f64) -> Ex
     if ok { ExitCode::SUCCESS } else { ExitCode::from(1) }
 }
 
-/// `cfb burn --rom <f> [--mbc]` —— 写入 ROM。
+/// `cfb burn --rom <f> [--mbc] [--no-erase]` —— 写入 ROM。
 pub fn cmd_burn(
     json: bool,
     port: Option<String>,
@@ -489,6 +505,7 @@ pub fn cmd_burn(
     chip_erase: bool,
     unlock_ppb: bool,
     verify: bool,
+    no_erase: bool,
 ) -> ExitCode {
     let data = match std::fs::read(rom_path) {
         Ok(d) => d,
@@ -515,10 +532,10 @@ pub fn cmd_burn(
 
     let res = if mbc {
         // MBC：默认路径已是整片+扇区；`chip_erase` 标志与 GBA/CLI 对齐（MBC 侧忽略）
-        mbc::ops::write::burn(&mut link, &data, verify, chip_erase, &mut progress, &mut log)
+        mbc::ops::write::burn(&mut link, &data, verify, chip_erase, no_erase, &mut progress, &mut log)
     } else {
         // GBA：默认 chip_erase=true（整片擦后连续写）；`--sector` 传入 false
-        let opt = BurnOptions { chip_erase, unlock_ppb, verify };
+        let opt = BurnOptions { chip_erase, unlock_ppb, verify, no_erase };
         gba::ops::write::burn(&mut link, &data, &opt, &mut progress, &mut log)
     };
     device::power_idle(&mut link);
@@ -607,10 +624,7 @@ pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
         // CFI 无容量时与 info 一致：回落头 0x148，再不行默认 8MiB；仍走扇区擦除以便上报进度。
         let (cfi_size, _buf, sector_size) = mbc::ops::read::rom_get_cfi(&mut link);
         let live_ct = mbc::ops::read::read_cart_byte(&mut link, 0x147).unwrap_or(0xFF);
-        let kind = match live_ct {
-            0x0F..=0x13 => mbc::data::MbcKind::Mbc3,
-            _ => mbc::data::MbcKind::Mbc5,
-        };
+        let kind = mbc::data::MbcKind::from_cartridge_type(live_ct);
         let device_size = if cfi_size > 0 {
             cfi_size
         } else {
@@ -678,11 +692,8 @@ pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
             true
         } else {
             log("扇区擦除失败，回落整片擦除...");
-            progress(0, 1);
-            let chip_ok = gba::ops::delete::erase_chip(&mut link, 240);
-            if chip_ok {
-                progress(1, 1);
-            }
+            let chip_ok =
+                gba::ops::delete::erase_chip_logged(&mut link, 240, &mut progress, &mut log);
             chip_ok
         }
     };
@@ -763,7 +774,9 @@ fn parse_save_type(json: bool, cmd: &str, raw: Option<String>) -> Option<gba::da
 /// MBC 不支持 FLASH；免电走 `db_DMG_bl` 路径。
 fn mbc_save_type(st: gba::data::SaveType) -> Result<gba::data::SaveType, ()> {
     match st {
-        gba::data::SaveType::Flash => Err(()),
+        gba::data::SaveType::Flash
+        | gba::data::SaveType::Eeprom4k
+        | gba::data::SaveType::Eeprom64k => Err(()),
         other => Ok(other),
     }
 }
@@ -778,11 +791,20 @@ fn resolve_mbc_bl(link: &mut CartridgeLink) -> Option<(mbc::data::MbcKind, crate
 
 /// 读卡带确定 MBC 代次 + 默认存档大小（头 0x149）。
 fn mbc_save_defaults(link: &mut CartridgeLink) -> (mbc::data::MbcKind, u64) {
+    if let Some(raw) = mbc::ops::read::read_live_header(link) {
+        let header = mbc::ops::read::parse_header(&raw);
+        let kind = mbc::data::MbcKind::from_cartridge_type(header.cartridge_type);
+        return (kind, header.ram_size_bytes);
+    }
     let ct = mbc::ops::read::read_cart_byte(link, 0x147).unwrap_or(0xFF);
     let kind = mbc::data::MbcKind::from_cartridge_type(ct);
-    let ram = match mbc::ops::read::read_cart_byte(link, 0x149) {
-        Some(code) => mbc::ops::read::ram_size(code),
-        None => 0,
+    let ram = if kind == mbc::data::MbcKind::Mbc2 {
+        512
+    } else {
+        match mbc::ops::read::read_cart_byte(link, 0x149) {
+            Some(code) => mbc::ops::read::ram_size(code),
+            None => 0,
+        }
     };
     (kind, ram)
 }
@@ -839,6 +861,17 @@ pub fn cmd_save_dump(
         }
     } else {
         match st {
+            gba::data::SaveType::Eeprom4k | gba::data::SaveType::Eeprom64k => {
+                let expected = st.eeprom_size().unwrap();
+                if len_opt.map(|len| len != expected).unwrap_or(false) {
+                    device::power_idle(&mut link);
+                    op_err(json, cmd, &format!("{} 存档长度固定为 {} 字节", st.label(), expected));
+                    return ExitCode::from(2);
+                }
+                let r = gba::ops::save::dump_eeprom(&mut link, st, out_path, &mut log, &mut progress);
+                emit_save_info(json, st, None, r.bytes);
+                r
+            }
             gba::data::SaveType::Batteryless => {
                 // 免电：需先 dump 出 ROM 镜像做魔数定位。用 CFI 容量决定读多长。
                 let dev_size = gba::ops::read_info(&mut link).device_size;
@@ -917,6 +950,11 @@ pub fn cmd_save_write(
         }
     } else {
         match st {
+            gba::data::SaveType::Eeprom4k | gba::data::SaveType::Eeprom64k => {
+                let r = gba::ops::save::write_eeprom(&mut link, st, &data, &mut log, &mut progress);
+                emit_save_info(json, st, None, r.bytes);
+                r
+            }
             gba::data::SaveType::Batteryless => {
                 let dev_size = gba::ops::read_info(&mut link).device_size;
                 if dev_size == 0 {
@@ -993,6 +1031,11 @@ pub fn cmd_save_verify(
         }
     } else {
         match st {
+            gba::data::SaveType::Eeprom4k | gba::data::SaveType::Eeprom64k => {
+                let r = gba::ops::save::verify_eeprom(&mut link, st, &data, &mut log, &mut progress);
+                emit_save_info(json, st, None, r.bytes);
+                r
+            }
             gba::data::SaveType::Batteryless => {
                 let dev_size = gba::ops::read_info(&mut link).device_size;
                 if dev_size == 0 {
@@ -1079,6 +1122,19 @@ pub fn cmd_save_erase(
         }
     } else {
         match st {
+            gba::data::SaveType::Eeprom4k | gba::data::SaveType::Eeprom64k => {
+                let expected = st.eeprom_size().unwrap();
+                if len_opt.map(|len| len != expected).unwrap_or(false) {
+                    device::power_idle(&mut link);
+                    op_err(json, cmd, &format!("{} 存档长度固定为 {} 字节", st.label(), expected));
+                    return ExitCode::from(2);
+                }
+                log(&i18n::t("save.erase"));
+                let data = vec![0xffu8; expected as usize];
+                let r = gba::ops::save::write_eeprom(&mut link, st, &data, &mut log, &mut progress);
+                emit_save_info(json, st, None, r.bytes);
+                r
+            }
             gba::data::SaveType::Batteryless => {
                 let info = gba::ops::read_info(&mut link);
                 if info.device_size == 0 {
@@ -1252,6 +1308,9 @@ mod tests {
     #[test]
     fn save_type_parses() {
         use gba::data::SaveType;
+        assert_eq!(SaveType::from_user("eeprom4k"), Some(SaveType::Eeprom4k));
+        assert_eq!(SaveType::from_user("EEPROM64K"), Some(SaveType::Eeprom64k));
+        assert_eq!(SaveType::from_user("eeprom512b"), Some(SaveType::Eeprom4k));
         assert_eq!(SaveType::from_user("sram"), Some(SaveType::Sram));
         assert_eq!(SaveType::from_user("FLASH"), Some(SaveType::Flash));
         assert_eq!(SaveType::from_user("Fram"), Some(SaveType::Fram));
@@ -1259,6 +1318,8 @@ mod tests {
         assert_eq!(SaveType::from_user("bat"), Some(SaveType::Batteryless));
         assert_eq!(SaveType::from_user("nope"), None);
         assert_eq!(SaveType::Sram.label(), "SRAM");
+        assert_eq!(SaveType::Eeprom4k.eeprom_size(), Some(512));
+        assert_eq!(SaveType::Eeprom64k.eeprom_size(), Some(8192));
         assert_eq!(SaveType::Batteryless.label(), "Batteryless");
     }
 }

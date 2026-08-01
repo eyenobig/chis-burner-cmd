@@ -47,6 +47,8 @@ pub struct BurnOptions {
     pub unlock_ppb: bool,
     /// 烧后校验 + 修复。
     pub verify: bool,
+    /// 跳过擦除直接写入（`--no-erase`，仅用于测纯写入吞吐，要求 flash 已是擦除态）。
+    pub no_erase: bool,
 }
 
 /// 烧录结果。
@@ -63,6 +65,10 @@ pub struct BurnResult {
 /// 与 C# `comboBox_ramType` / `comboBox_mbc5RamType` 对应。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SaveType {
+    /// 4Kbit EEPROM（512 字节，6 位块地址）。
+    Eeprom4k,
+    /// 64Kbit EEPROM（8192 字节，14 位块地址）。
+    Eeprom64k,
     /// SRAM（电池保持的静态 RAM，最常见）。
     Sram,
     /// FLASH 存档（写前需 JEDEC 整片擦除）。
@@ -77,6 +83,8 @@ impl SaveType {
     /// 解析用户输入（sram/flash/fram/batteryless，兼容简写 bat）。无效返回 None。
     pub fn from_user(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
+            "eeprom4k" | "eeprom512" | "eeprom512b" => Some(Self::Eeprom4k),
+            "eeprom64k" | "eeprom8k" | "eeprom8192" => Some(Self::Eeprom64k),
             "sram" => Some(Self::Sram),
             "flash" => Some(Self::Flash),
             "fram" => Some(Self::Fram),
@@ -88,10 +96,20 @@ impl SaveType {
     /// 文案标签。
     pub fn label(self) -> &'static str {
         match self {
+            Self::Eeprom4k => "4K EEPROM",
+            Self::Eeprom64k => "64K EEPROM",
             Self::Sram => "SRAM",
             Self::Flash => "FLASH",
             Self::Fram => "FRAM",
             Self::Batteryless => "Batteryless",
+        }
+    }
+
+    pub fn eeprom_size(self) -> Option<u64> {
+        match self {
+            Self::Eeprom4k => Some(512),
+            Self::Eeprom64k => Some(8192),
+            _ => None,
         }
     }
 }

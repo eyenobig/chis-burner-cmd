@@ -24,6 +24,8 @@ pub struct MbcHeader {
 /// flash 命令序列（unlock/erase/program/CFI）两代完全相同，只有这两处不同。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MbcKind {
+    Mbc1,
+    Mbc2,
     Mbc3,
     Mbc5,
 }
@@ -33,6 +35,8 @@ impl MbcKind {
     /// 0x0F..=0x13 = MBC3（含 MBC3+RTC）；其余（含 0x19..=0x1E MBC5 及未知）按 MBC5 处理。
     pub fn from_cartridge_type(cartridge_type: u8) -> Self {
         match cartridge_type {
+            0x01..=0x03 => MbcKind::Mbc1,
+            0x05 | 0x06 => MbcKind::Mbc2,
             0x0F..=0x13 => MbcKind::Mbc3,
             _ => MbcKind::Mbc5,
         }
@@ -40,6 +44,8 @@ impl MbcKind {
 
     pub fn label(self) -> &'static str {
         match self {
+            MbcKind::Mbc1 => "MBC1",
+            MbcKind::Mbc2 => "MBC2",
             MbcKind::Mbc3 => "MBC3",
             MbcKind::Mbc5 => "MBC5",
         }

@@ -36,11 +36,36 @@ fn ram_enable(link: &mut CartridgeLink) {
 
 /// 选 RAM bank（写 0x4000，按 MBC 代次取掩码）。复刻 `mbc_ramSwitchBank`。
 fn switch_ram_bank(link: &mut CartridgeLink, kind: MbcKind, bank: u32) {
-    let b = match kind {
-        MbcKind::Mbc3 => (bank & 0x07) as u8,
-        MbcKind::Mbc5 => (bank & 0xff) as u8,
-    };
-    link.gbc_write(0x4000, &[b]);
+    match kind {
+        MbcKind::Mbc1 => {
+            link.gbc_write(0x6000, &[0x01]);
+            link.gbc_write(0x4000, &[(bank & 0x03) as u8]);
+        }
+        MbcKind::Mbc2 => {}
+        MbcKind::Mbc3 => {
+            link.gbc_write(0x4000, &[(bank & 0x07) as u8]);
+        }
+        MbcKind::Mbc5 => {
+            link.gbc_write(0x4000, &[(bank & 0xff) as u8]);
+        }
+    }
+}
+
+fn save_address(kind: MbcKind, ram_off: u64) -> (u32, u32) {
+    if kind == MbcKind::Mbc2 {
+        (0, RAM_WINDOW + (ram_off as u32 & 0x01ff))
+    } else {
+        ((ram_off >> 13) as u32, RAM_WINDOW + (ram_off as u32 & 0x1fff))
+    }
+}
+
+fn validate_size(kind: MbcKind, len: u64, log: &mut dyn FnMut(&str)) -> bool {
+    if kind == MbcKind::Mbc2 && len > 512 {
+        log("MBC2 存档固定为 512 字节（每字节低 4 位有效）");
+        false
+    } else {
+        true
+    }
 }
 
 /// reconnect 后的复位：按电压偏好/默认重上电 + 重新使能 RAM。
@@ -81,6 +106,9 @@ pub fn dump(
     progress: &mut dyn FnMut(u64, u64),
 ) -> SaveResult {
     let t0 = Instant::now();
+    if !validate_size(kind, len, log) {
+        return fail(0, t0);
+    }
     let mut f = match std::fs::File::create(path) {
         Ok(f) => f,
         Err(_) => {
@@ -97,18 +125,23 @@ pub fn dump(
     while read < len {
         let n = ((len - read) as usize).min(PACKET);
         let ram_off = read;
-        let bank = (ram_off >> 13) as i64;
+        let (bank_u32, cart_addr) = save_address(kind, ram_off);
+        let bank = bank_u32 as i64;
         if bank != current_bank {
             current_bank = bank;
             log(&crate::i18n::tf("save.bank", &[("n", &bank.to_string())]));
             switch_ram_bank(link, kind, bank as u32);
         }
-        let cart_addr = RAM_WINDOW + (ram_off as u32 & 0x1fff);
         let b = &mut buf[..n];
         if !read_chunk(link, fram, cart_addr, b) {
             rearm(link, kind, bank as u32);
             current_bank = -1;
             continue;
+        }
+        if kind == MbcKind::Mbc2 {
+            for byte in b.iter_mut() {
+                *byte = (*byte & 0x0f) | 0xf0;
+            }
         }
         if f.write_all(b).is_err() {
             log(&crate::i18n::t("save.write_fail"));
@@ -132,6 +165,9 @@ pub fn write(
 ) -> SaveResult {
     let t0 = Instant::now();
     let total = data.len() as u64;
+    if !validate_size(kind, total, log) {
+        return fail(0, t0);
+    }
 
     ram_enable(link);
     let mut written = 0u64;
@@ -139,14 +175,20 @@ pub fn write(
     while written < total {
         let n = ((total - written) as usize).min(PACKET);
         let ram_off = written;
-        let bank = (ram_off >> 13) as i64;
+        let (bank_u32, cart_addr) = save_address(kind, ram_off);
+        let bank = bank_u32 as i64;
         if bank != current_bank {
             current_bank = bank;
             log(&crate::i18n::tf("save.bank", &[("n", &bank.to_string())]));
             switch_ram_bank(link, kind, bank as u32);
         }
-        let cart_addr = RAM_WINDOW + (ram_off as u32 & 0x1fff);
-        write_chunk(link, fram, cart_addr, &data[written as usize..written as usize + n]);
+        let chunk = &data[written as usize..written as usize + n];
+        if kind == MbcKind::Mbc2 {
+            let low_nibbles: Vec<u8> = chunk.iter().map(|byte| byte & 0x0f).collect();
+            write_chunk(link, fram, cart_addr, &low_nibbles);
+        } else {
+            write_chunk(link, fram, cart_addr, chunk);
+        }
         written += n as u64;
         progress(written, total);
     }
@@ -164,6 +206,9 @@ pub fn verify(
 ) -> SaveResult {
     let t0 = Instant::now();
     let total = data.len() as u64;
+    if !validate_size(kind, total, log) {
+        return fail(0, t0);
+    }
 
     ram_enable(link);
     let mut read = 0u64;
@@ -173,12 +218,12 @@ pub fn verify(
     while read < total {
         let n = ((total - read) as usize).min(PACKET);
         let ram_off = read;
-        let bank = (ram_off >> 13) as i64;
+        let (bank_u32, cart_addr) = save_address(kind, ram_off);
+        let bank = bank_u32 as i64;
         if bank != current_bank {
             current_bank = bank;
             switch_ram_bank(link, kind, bank as u32);
         }
-        let cart_addr = RAM_WINDOW + (ram_off as u32 & 0x1fff);
         let b = &mut buf[..n];
         if !read_chunk(link, fram, cart_addr, b) {
             rearm(link, kind, bank as u32);
@@ -186,7 +231,13 @@ pub fn verify(
             continue;
         }
         for i in 0..n {
-            if data[read as usize + i] != b[i] {
+            let expected = data[read as usize + i];
+            let differs = if kind == MbcKind::Mbc2 {
+                (expected & 0x0f) != (b[i] & 0x0f)
+            } else {
+                expected != b[i]
+            };
+            if differs {
                 mismatch += 1;
                 if mismatch <= 32 {
                     log(&crate::i18n::tf(

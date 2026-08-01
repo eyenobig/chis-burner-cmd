@@ -242,6 +242,204 @@ pub fn verify(
     }
 }
 
+// EEPROM occupies the final 256 bytes of the 32 MiB Game Pak ROM window.
+// CartridgeLink::rom_write uses halfword addresses; rom_read uses byte addresses.
+const EEPROM_WORD_ADDR: u32 = 0x00ff_ff80;
+const EEPROM_BYTE_ADDR: u32 = EEPROM_WORD_ADDR << 1;
+const EEPROM_BLOCK: usize = 8;
+
+fn eeprom_params(st: SaveType) -> Option<(usize, usize)> {
+    match st {
+        SaveType::Eeprom4k => Some((6, 512)),
+        SaveType::Eeprom64k => Some((14, 8192)),
+        _ => None,
+    }
+}
+
+fn push_eeprom_bit(words: &mut Vec<u8>, bit: u8) {
+    words.extend_from_slice(&(u16::from(bit & 1)).to_le_bytes());
+}
+
+fn push_eeprom_value(words: &mut Vec<u8>, value: u32, bits: usize) {
+    for shift in (0..bits).rev() {
+        push_eeprom_bit(words, ((value >> shift) & 1) as u8);
+    }
+}
+
+fn eeprom_read_request(block: u32, address_bits: usize) -> Vec<u8> {
+    let mut words = Vec::with_capacity((address_bits + 3) * 2);
+    push_eeprom_bit(&mut words, 1);
+    push_eeprom_bit(&mut words, 1);
+    push_eeprom_value(&mut words, block, address_bits);
+    push_eeprom_bit(&mut words, 0);
+    words
+}
+
+fn eeprom_write_request(block: u32, address_bits: usize, data: &[u8; EEPROM_BLOCK]) -> Vec<u8> {
+    let mut words = Vec::with_capacity((address_bits + 67) * 2);
+    push_eeprom_bit(&mut words, 1);
+    push_eeprom_bit(&mut words, 0);
+    push_eeprom_value(&mut words, block, address_bits);
+    for byte in data {
+        push_eeprom_value(&mut words, u32::from(*byte), 8);
+    }
+    push_eeprom_bit(&mut words, 0);
+    words
+}
+
+fn decode_eeprom_read(words: &[u8]) -> Option<[u8; EEPROM_BLOCK]> {
+    if words.len() < (4 + 64) * 2 {
+        return None;
+    }
+    let mut out = [0u8; EEPROM_BLOCK];
+    for bit_index in 0..64 {
+        let word_offset = (4 + bit_index) * 2;
+        let bit = words[word_offset] & 1;
+        out[bit_index / 8] = (out[bit_index / 8] << 1) | bit;
+    }
+    Some(out)
+}
+
+fn eeprom_read_block(link: &mut CartridgeLink, block: u32, address_bits: usize) -> Option<[u8; EEPROM_BLOCK]> {
+    let request = eeprom_read_request(block, address_bits);
+    if !link.rom_write(EEPROM_WORD_ADDR, &request) {
+        return None;
+    }
+    let mut words = [0u8; (4 + 64) * 2];
+    if !link.rom_read(EEPROM_BYTE_ADDR, &mut words) {
+        return None;
+    }
+    decode_eeprom_read(&words)
+}
+
+fn eeprom_write_block(
+    link: &mut CartridgeLink,
+    block: u32,
+    address_bits: usize,
+    data: &[u8; EEPROM_BLOCK],
+) -> bool {
+    let request = eeprom_write_request(block, address_bits, data);
+    if !link.rom_write(EEPROM_WORD_ADDR, &request) {
+        return false;
+    }
+
+    let started = Instant::now();
+    let mut ready = [0u8; 2];
+    while started.elapsed() < std::time::Duration::from_millis(20) {
+        if link.rom_read(EEPROM_BYTE_ADDR, &mut ready) && (ready[0] & 1) != 0 {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    false
+}
+
+fn validate_eeprom_size(st: SaveType, len: usize, log: &mut dyn FnMut(&str)) -> Option<(usize, usize)> {
+    let (address_bits, expected) = eeprom_params(st)?;
+    if len != expected {
+        log(&format!("{} 存档必须正好为 {} 字节，实际为 {} 字节", st.label(), expected, len));
+        None
+    } else {
+        Some((address_bits, expected))
+    }
+}
+
+pub fn dump_eeprom(
+    link: &mut CartridgeLink,
+    st: SaveType,
+    path: &str,
+    log: &mut dyn FnMut(&str),
+    progress: &mut dyn FnMut(u64, u64),
+) -> SaveResult {
+    let t0 = Instant::now();
+    let Some((address_bits, total)) = eeprom_params(st) else {
+        return fail(0, t0);
+    };
+    let mut file = match std::fs::File::create(path) {
+        Ok(file) => file,
+        Err(_) => {
+            log(&crate::i18n::t("save.write_fail"));
+            return fail(0, t0);
+        }
+    };
+    use std::io::Write;
+    for offset in (0..total).step_by(EEPROM_BLOCK) {
+        let Some(block) = eeprom_read_block(link, (offset / EEPROM_BLOCK) as u32, address_bits) else {
+            log(&format!("EEPROM 读取失败 @ 0x{offset:04X}"));
+            return fail(offset as u64, t0);
+        };
+        if file.write_all(&block).is_err() {
+            log(&crate::i18n::t("save.write_fail"));
+            return fail(offset as u64, t0);
+        }
+        progress((offset + EEPROM_BLOCK) as u64, total as u64);
+    }
+    let _ = file.flush();
+    ok(total as u64, t0)
+}
+
+pub fn write_eeprom(
+    link: &mut CartridgeLink,
+    st: SaveType,
+    data: &[u8],
+    log: &mut dyn FnMut(&str),
+    progress: &mut dyn FnMut(u64, u64),
+) -> SaveResult {
+    let t0 = Instant::now();
+    let Some((address_bits, total)) = validate_eeprom_size(st, data.len(), log) else {
+        return fail(0, t0);
+    };
+    for offset in (0..total).step_by(EEPROM_BLOCK) {
+        let block: &[u8; EEPROM_BLOCK] = data[offset..offset + EEPROM_BLOCK].try_into().unwrap();
+        if !eeprom_write_block(link, (offset / EEPROM_BLOCK) as u32, address_bits, block) {
+            log(&format!("EEPROM 写入超时 @ 0x{offset:04X}"));
+            return fail(offset as u64, t0);
+        }
+        progress((offset + EEPROM_BLOCK) as u64, total as u64);
+    }
+    ok(total as u64, t0)
+}
+
+pub fn verify_eeprom(
+    link: &mut CartridgeLink,
+    st: SaveType,
+    data: &[u8],
+    log: &mut dyn FnMut(&str),
+    progress: &mut dyn FnMut(u64, u64),
+) -> SaveResult {
+    let t0 = Instant::now();
+    let Some((address_bits, total)) = validate_eeprom_size(st, data.len(), log) else {
+        return fail(0, t0);
+    };
+    let mut mismatch = 0u32;
+    for offset in (0..total).step_by(EEPROM_BLOCK) {
+        let Some(block) = eeprom_read_block(link, (offset / EEPROM_BLOCK) as u32, address_bits) else {
+            log(&format!("EEPROM 读取失败 @ 0x{offset:04X}"));
+            return fail(offset as u64, t0);
+        };
+        for i in 0..EEPROM_BLOCK {
+            if data[offset + i] != block[i] {
+                mismatch += 1;
+                if mismatch <= 32 {
+                    log(&format!(
+                        "EEPROM 校验不符 @ 0x{:04X}: 期望 {:02X}，读到 {:02X}",
+                        offset + i,
+                        data[offset + i],
+                        block[i]
+                    ));
+                }
+            }
+        }
+        progress((offset + EEPROM_BLOCK) as u64, total as u64);
+    }
+    SaveResult {
+        success: mismatch == 0,
+        bytes: total as u64,
+        mismatch_bytes: mismatch,
+        seconds: t0.elapsed().as_secs_f64(),
+    }
+}
+
 /// 定位免电存档在 ROM 镜像中的位置（纯函数，便于单测）。
 ///
 /// 复刻 `gba_searchBatteryless`（单卡，base=0）：
@@ -463,6 +661,28 @@ fn fail(bytes: u64, t0: Instant) -> SaveResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn eeprom_command_lengths_match_gba_protocol() {
+        let data = [0xA5; EEPROM_BLOCK];
+        assert_eq!(eeprom_read_request(0x12, 6).len(), 9 * 2);
+        assert_eq!(eeprom_read_request(0x1234, 14).len(), 17 * 2);
+        assert_eq!(eeprom_write_request(0x12, 6, &data).len(), 73 * 2);
+        assert_eq!(eeprom_write_request(0x1234, 14, &data).len(), 81 * 2);
+    }
+
+    #[test]
+    fn eeprom_read_decoder_skips_four_dummy_bits_and_uses_msb_first() {
+        let expected = [0x00, 0x01, 0x7f, 0x80, 0xa5, 0x5a, 0xfe, 0xff];
+        let mut words = Vec::new();
+        for _ in 0..4 {
+            push_eeprom_bit(&mut words, 0);
+        }
+        for byte in expected {
+            push_eeprom_value(&mut words, u32::from(byte), 8);
+        }
+        assert_eq!(decode_eeprom_read(&words), Some(expected));
+    }
 
     /// 构造一个带免电存档的合成 ROM blob，魔数紧贴 boot_vector 之后。
     ///

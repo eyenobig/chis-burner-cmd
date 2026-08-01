@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 use crate::cartridge_link::CartridgeLink;
 use crate::progress_display::{Phase, ProgressLog};
 
-/// 全片擦除并等待完成（轮询读到 0xFFFF）。
+/// 全片擦除并等待完成（轮询读到 0xFFFF）。最简原语；烧录/擦除命令用带进度心跳的
+/// [`erase_chip_logged`]。保留此处作为无 progress 依赖的基线实现。
+#[allow(dead_code)]
 pub fn erase_chip(link: &mut CartridgeLink, timeout_secs: u64) -> bool {
     if !link.rom_erase_chip() {
         return false;
@@ -20,6 +22,45 @@ pub fn erase_chip(link: &mut CartridgeLink, timeout_secs: u64) -> bool {
         }
         std::thread::sleep(Duration::from_millis(500));
         if start.elapsed().as_secs() > timeout_secs {
+            return false;
+        }
+    }
+}
+
+/// 同 [`erase_chip`]，但按「已用秒/超时秒」发 progress 心跳 + 节流 log。
+///
+/// 整片擦除耗时约 1–2 分钟，期间无法按字节分段汇报进度；参照 NDJSON 契约
+/// （`event.rs`：整片擦除心跳 done/total 为已用秒/超时秒）与 MBC 的
+/// `erase_chip_logged`，每轮轮询后发一次心跳，让客户端进度条按时间线性推进，
+/// 避免「擦除阶段死停 0%、进入写入后突然跳满」的前慢后快观感。
+pub fn erase_chip_logged(
+    link: &mut CartridgeLink,
+    timeout_secs: u64,
+    progress: &mut dyn FnMut(u64, u64),
+    log: &mut dyn FnMut(&str),
+) -> bool {
+    let total = timeout_secs.max(1);
+    if !link.rom_erase_chip() {
+        return false;
+    }
+    log(&format!("整片擦除开始（超时 {total}s）..."));
+    let start = Instant::now();
+    let mut probe = [0u8; 2];
+    let mut plog = ProgressLog::new(Phase::Erase);
+    plog.report(0, total, progress, log);
+
+    loop {
+        if link.rom_read(0, &mut probe) && probe == [0xff, 0xff] {
+            plog.report(total, total, progress, log);
+            log(&format!("整片擦除完毕，耗时 {:.3}s", start.elapsed().as_secs_f64()));
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        let elapsed = start.elapsed().as_secs().min(total.saturating_sub(1));
+        plog.report(elapsed, total, progress, log);
+        if start.elapsed().as_secs() > timeout_secs {
+            plog.report(total, total, progress, log);
+            log(&format!("整片擦除超时（{:.1}s）", start.elapsed().as_secs_f64()));
             return false;
         }
     }
@@ -155,8 +196,14 @@ pub fn unlock_all_ppb_logged(link: &mut CartridgeLink, log: &mut dyn FnMut(&str)
 
 // ============ profile 驱动的擦除（命中 profile 时走命令序列，否则用上面的硬编码）============
 
-/// profile 命中时用 chip_erase 序列；否则回落 [`erase_chip`]。
-pub fn chip_erase_profile(link: &mut CartridgeLink, p: &crate::profile::Profile, timeout_secs: u64) -> bool {
+/// profile 命中时用 chip_erase 序列；否则回落 [`erase_chip_logged`] 时带进度心跳。
+pub fn chip_erase_profile_logged(
+    link: &mut CartridgeLink,
+    p: &crate::profile::Profile,
+    timeout_secs: u64,
+    progress: &mut dyn FnMut(u64, u64),
+    log: &mut dyn FnMut(&str),
+) -> bool {
     let timeout = p.chip_erase_timeout.max(timeout_secs);
     if let Some(seq) = p.chip_erase() {
         // run_gba 含 wait_for；整片擦耗时长，失败用关口重连清总线，再试。
@@ -168,7 +215,7 @@ pub fn chip_erase_profile(link: &mut CartridgeLink, p: &crate::profile::Profile,
         }
         false
     } else {
-        erase_chip(link, timeout)
+        erase_chip_logged(link, timeout, progress, log)
     }
 }
 

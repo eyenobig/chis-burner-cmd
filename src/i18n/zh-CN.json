@@ -11,7 +11,7 @@
   "progress.label.erase": "擦除",
   "progress.label.write": "写入",
   "progress.label.verify": "校验",
-  "progress.label.dump": "读取",
+  "progress.label.dump": "导出",
   "dump.fail": "导出失败: {err}",
   "save.type_invalid": "无效存档类型 '{v}'（用 sram / flash / fram / batteryless）。",
   "save.not_found": "找不到免电存档（ROM 内无 '<3 from Maniac' 魔数）。",

@@ -19,6 +19,26 @@ pub const BANK_SIZE: u32 = 0x4000;
 ///   - 用 C# 的「N→0x2000」时烧录稳定死在 `@0x4000`；改 N+1 后 bank0–2 读回校验 0 mismatch。
 pub fn switch_bank(link: &mut CartridgeLink, bank: u32, kind: MbcKind) {
     match kind {
+        MbcKind::Mbc1 => {
+            let upper = ((bank >> 5) & 0x03) as u8;
+            let lower = (bank & 0x1f) as u8;
+            if bank == 0 || lower == 0 {
+                link.gbc_write(0x6000, &[0x01]);
+                link.gbc_write(0x4000, &[upper]);
+                link.gbc_write(0x2000, &[0x01]);
+            } else {
+                link.gbc_write(0x6000, &[0x00]);
+                link.gbc_write(0x4000, &[upper]);
+                link.gbc_write(0x2000, &[lower]);
+            }
+        }
+        MbcKind::Mbc2 => {
+            let mut b = (bank & 0x0f) as u8;
+            if b == 0 {
+                b = 1;
+            }
+            link.gbc_write(0x2100, &[b]);
+        }
         MbcKind::Mbc3 => {
             let mut b = (bank & 0xff) as u8;
             if b == 0 {
@@ -58,6 +78,8 @@ pub fn switch_bank_mbcx(link: &mut CartridgeLink, bank: u32, kind: MbcKind, _fla
 pub fn bus_addr(rom_off: u32, kind: MbcKind) -> u32 {
     let bank = rom_off >> 14;
     let base = match kind {
+        MbcKind::Mbc1 if bank == 0 || (bank & 0x1f) == 0 => 0x0000,
+        MbcKind::Mbc2 if bank == 0 => 0x0000,
         MbcKind::Mbc3 if bank == 0 => 0x0000,
         _ => 0x4000,
     };
@@ -72,7 +94,7 @@ pub fn flash_phys_addr(rom_off: u32, kind: MbcKind) -> u32 {
     let off14 = rom_off & 0x3fff;
     match kind {
         MbcKind::Mbc5 => ((bank.saturating_add(1)) << 14) | off14,
-        MbcKind::Mbc3 => rom_off,
+        MbcKind::Mbc1 | MbcKind::Mbc2 | MbcKind::Mbc3 => rom_off,
     }
 }
 
@@ -329,7 +351,11 @@ pub fn parse_header(rom: &[u8]) -> MbcHeader {
 
     let cartridge_type = rom.get(0x147).copied().unwrap_or(0);
     let rom_size_bytes = (32 * 1024u64) << rom.get(0x148).copied().unwrap_or(0).min(8);
-    let ram_size_bytes = ram_size(rom.get(0x149).copied().unwrap_or(0));
+    let ram_size_bytes = if matches!(cartridge_type, 0x05 | 0x06) {
+        512
+    } else {
+        ram_size(rom.get(0x149).copied().unwrap_or(0))
+    };
     let revision = rom.get(0x14C).copied().unwrap_or(0);
 
     MbcHeader {

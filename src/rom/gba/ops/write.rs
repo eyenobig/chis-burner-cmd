@@ -7,7 +7,8 @@
 use std::time::Instant;
 
 use super::delete::{
-    chip_erase_profile, erase_chip, erase_sector, sector_erase_profile, unlock_all_ppb_logged,
+    chip_erase_profile_logged, erase_chip_logged, erase_sector, sector_erase_profile,
+    unlock_all_ppb_logged,
 };
 use super::read::read_info;
 use crate::cartridge_link::CartridgeLink;
@@ -132,13 +133,31 @@ pub fn burn(
         let _ = link.rom_write(0, &[0xf0, 0x00]);
     }
 
-    if opt.chip_erase {
+    if opt.no_erase {
+        // --no-erase：跳过擦除，直接连续编程（仅用于测纯写入吞吐，要求 flash 已是擦除态）。
+        log("跳过擦除，直接写入（--no-erase，flash 须已为擦除态）");
+        let mut write_plog = ProgressLog::new(Phase::Write);
+        let mut write_progress = |d: u64, t: u64| {
+            progress(d, t);
+            if write_plog.should_log(d, t) {
+                log(&write_plog.format(d, t));
+            }
+        };
+        if let Some(fail) =
+            program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress)
+        {
+            log(&format!("写入失败 @0x{fail:08X}（已 DTR 重试×4）"));
+            res.first_bad = Some(fail);
+        }
+    } else if opt.chip_erase {
         log("整片擦除 ...");
         // 对齐 WinForms/tmp：优先固件 0xf1（实测 ~1–2 分钟）；profile 软件擦仅作回落。
         // 若先走 profile，WAIT_TIMEOUT(30s) 不够大片擦完，会把 flash 留在擦除态再拖垮固件擦。
-        let ok = erase_chip(link, CHIP_ERASE_TIMEOUT_SECS)
+        // erase_chip_logged / chip_erase_profile_logged 在擦除期间发「已用秒/超时秒」心跳，
+        // 让客户端进度条按时间线性推进，避免擦除阶段死停 0%。
+        let ok = erase_chip_logged(link, CHIP_ERASE_TIMEOUT_SECS, progress, log)
             || match &prof {
-                Some(p) => chip_erase_profile(link, p, CHIP_ERASE_TIMEOUT_SECS),
+                Some(p) => chip_erase_profile_logged(link, p, CHIP_ERASE_TIMEOUT_SECS, progress, log),
                 None => false,
             };
         if !ok {

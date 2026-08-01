@@ -1,6 +1,6 @@
-//! 统一进度展示：`擦除 45% · 12.3s` / `写入 78% · 45.1s`。
+//! 统一进度展示：`擦除 45% · 12.3s` / `写入 78% · 45.1s` / `导出 30% · 8.0s`。
 //!
-//! 擦除、写入、校验、读取共用同一格式；[`ProgressLog`] 负责节流，避免逐包刷屏，
+//! 擦除、写入、校验、导出共用同一格式；[`ProgressLog`] 负责节流，避免逐包刷屏，
 //! 同时在百分比前进或长时间停滞时持续输出已用时间。
 
 use std::time::{Duration, Instant};
@@ -9,7 +9,7 @@ use crate::i18n;
 
 /// 进度阶段（决定标签文案）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Dump 供 dump/读取路径复用同一格式
+#[allow(dead_code)] // Dump 供 dump/导出路径复用同一格式
 pub enum Phase {
     Erase,
     Write,

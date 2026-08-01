@@ -27,6 +27,7 @@ pub fn burn(
     rom: &[u8],
     verify: bool,
     chip_erase: bool,
+    no_erase: bool,
     progress: &mut dyn FnMut(u64, u64),
     log: &mut dyn FnMut(&str),
 ) -> BurnResult {
@@ -55,6 +56,8 @@ pub fn burn(
     let file_ct = rom.get(0x147).copied().unwrap_or(0xFF);
     let live_ct = super::read::read_cart_byte(link, 0x147).unwrap_or(0xFF);
     let kind = match live_ct {
+        0x01..=0x03 => MbcKind::Mbc1,
+        0x05 | 0x06 => MbcKind::Mbc2,
         0x0F..=0x13 => MbcKind::Mbc3,
         0x19..=0x1E => MbcKind::Mbc5,
         _ => MbcKind::Mbc5,
@@ -111,6 +114,12 @@ pub fn burn(
 
     // ---- 步骤 4：整片擦 + ROM 范围扇区擦（不因「看似空白」跳过）----
     // MBC 默认始终整片+扇区；`chip_erase` 保留与 GBA/CLI 对齐。
+    // `--no-erase` 跳过整个擦除+擦后重识别段，直接进入写入（仅用于测纯写入吞吐，
+    // 要求 flash 已是擦除态）。
+    if no_erase {
+        log("跳过擦除，直接写入（--no-erase，flash 须已为擦除态）");
+    } else {
+    let _ = chip_erase;
     let _ = chip_erase;
     log("擦除：整片 + ROM 范围扇区补擦 ...");
     // 整片失败不硬退：仍依赖后续扇区擦
@@ -171,6 +180,7 @@ pub fn burn(
     }
     switch_bank(link, 0, kind);
     std::thread::sleep(std::time::Duration::from_millis(50));
+    } // end !no_erase（擦除 + 擦后重识别段）
 
     // ---- 步骤 5：写入 ----
     log(&format!("开始写入 ... buf_wr={buf_wr}"));

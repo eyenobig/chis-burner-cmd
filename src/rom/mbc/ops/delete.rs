@@ -24,7 +24,7 @@ fn sector_erase_target(kind: MbcKind, phys_sector: u32) -> (u32, u32) {
             let sa = 0x4000 + (erase_phys & 0x3fff);
             (linear_bank, sa)
         }
-        MbcKind::Mbc3 => {
+        MbcKind::Mbc1 | MbcKind::Mbc2 | MbcKind::Mbc3 => {
             let bank = phys_sector >> 14;
             (bank, bus_addr(phys_sector, kind))
         }
@@ -241,7 +241,7 @@ fn sector_blank_check(
                 let linear = reg.saturating_sub(1);
                 (linear, 0x4000 + (erase_phys & 0x3fff))
             }
-            MbcKind::Mbc3 => {
+            MbcKind::Mbc1 | MbcKind::Mbc2 | MbcKind::Mbc3 => {
                 let p = phys as u32;
                 (p >> 14, bus_addr(p, kind))
             }

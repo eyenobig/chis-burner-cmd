@@ -7,11 +7,11 @@
 //!     disconnect                     断开烧录器并清除记住的端口
 //!     info  [--port P] [--mbc]       读 flash + 卡带/游戏信息
 //!     rom-info --file <f>            离线解析 ROM 文件头
-//!     burn  --rom <f> [--mbc] [...]  写入 ROM
+//!     burn  --rom <f> [--mbc] [--no-erase] [...]  写入 ROM
 //!     erase [--mbc]                  清空 ROM（整片擦除）
 //!     dump  --out <f> [--mbc] [--len N]  导出 ROM 到文件
 //!     rtc   [--mbc]                  读取卡带 RTC
-//!     save-dump   --out <f> [--mbc] [--type sram|flash|fram|batteryless] [--len N]  导出存档
+//!     save-dump   --out <f> [--mbc] [--type eeprom4k|eeprom64k|sram|flash|fram|batteryless] [--len N]
 //!     save-write  --file <f> [--mbc] [--type ...]  写入存档
 //!     save-verify --file <f> [--mbc] [--type ...]  校验存档
 //!     save-erase  [--mbc] [--type ...] [--len N]   擦除存档（填 0xFF）
@@ -66,6 +66,11 @@ fn positionals(args: &[String]) -> Vec<&str> {
     out
 }
 
+fn print_usage() {
+    println!("{}", i18n::t("usage"));
+    println!("\nGBA EEPROM: --type eeprom4k (512 B) | eeprom64k (8192 B)");
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -110,6 +115,7 @@ fn main() -> ExitCode {
         },
         "burn" | "write" => match opt_value(&args, "--rom") {
             // GBA 默认整片擦后连续写（对齐 WinForms / tmp 成功路径）；`--sector` 才逐扇区。
+            // `--no-erase` 跳过擦除直接写入（仅用于测纯写入吞吐，要求 flash 已是擦除态）。
             Some(f) => rom::cmd_burn(
                 json,
                 port,
@@ -118,6 +124,7 @@ fn main() -> ExitCode {
                 !has_flag(&args, "--sector"),
                 !has_flag(&args, "--no-ppb"),
                 !has_flag(&args, "--no-verify"),
+                has_flag(&args, "--no-erase"),
             ),
             None => arg_required(json, "burn", "op.no_rom"),
         },
@@ -153,7 +160,7 @@ fn main() -> ExitCode {
         }
         "profile" => profile::cmd_profile(json, pos.get(1).copied()),
         "" | "help" | "-h" | "--help" => {
-            println!("{}", i18n::t("usage"));
+            print_usage();
             ExitCode::SUCCESS
         }
         "version" => {
@@ -174,7 +181,7 @@ fn main() -> ExitCode {
                 emit(&Event::Error { command: other.to_string(), message: msg });
             } else {
                 eprintln!("{msg}\n");
-                println!("{}", i18n::t("usage"));
+                print_usage();
             }
             ExitCode::from(2)
         }
