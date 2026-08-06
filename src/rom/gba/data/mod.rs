@@ -61,7 +61,7 @@ pub struct BurnResult {
     pub seconds: f64,
 }
 
-/// 存档类型（GBA：SRAM/FLASH/FRAM/免电；MBC 仅 SRAM/FRAM）。
+/// 存档类型（GBA：EEPROM/SRAM/FLASH/FRAM；MBC 仅 SRAM/FRAM）。
 /// 与 C# `comboBox_ramType` / `comboBox_mbc5RamType` 对应。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SaveType {
@@ -75,12 +75,10 @@ pub enum SaveType {
     Flash,
     /// FRAM（铁电，需按 latency 时序访问）。
     Fram,
-    /// 免电存档（batteryless，存档藏在 ROM flash 里，靠魔数定位）。
-    Batteryless,
 }
 
 impl SaveType {
-    /// 解析用户输入（sram/flash/fram/batteryless，兼容简写 bat）。无效返回 None。
+    /// 解析用户输入（eeprom4k/eeprom64k/sram/flash/fram）。无效返回 None。
     pub fn from_user(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "eeprom4k" | "eeprom512" | "eeprom512b" => Some(Self::Eeprom4k),
@@ -88,7 +86,6 @@ impl SaveType {
             "sram" => Some(Self::Sram),
             "flash" => Some(Self::Flash),
             "fram" => Some(Self::Fram),
-            "batteryless" | "bat" => Some(Self::Batteryless),
             _ => None,
         }
     }
@@ -101,7 +98,6 @@ impl SaveType {
             Self::Sram => "SRAM",
             Self::Flash => "FLASH",
             Self::Fram => "FRAM",
-            Self::Batteryless => "Batteryless",
         }
     }
 

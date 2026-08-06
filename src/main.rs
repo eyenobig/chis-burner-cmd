@@ -11,7 +11,7 @@
 //!     erase [--mbc]                  清空 ROM（整片擦除）
 //!     dump  --out <f> [--mbc] [--len N]  导出 ROM 到文件
 //!     rtc   [--mbc]                  读取卡带 RTC
-//!     save-dump   --out <f> [--mbc] [--type eeprom4k|eeprom64k|sram|flash|fram|batteryless] [--len N]
+//!     save-dump   --out <f> [--mbc] [--type eeprom4k|eeprom64k|sram|flash|fram] [--len N]
 //!     save-write  --file <f> [--mbc] [--type ...]  写入存档
 //!     save-verify --file <f> [--mbc] [--type ...]  校验存档
 //!     save-erase  [--mbc] [--type ...] [--len N]   擦除存档（填 0xFF）

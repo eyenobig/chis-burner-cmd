@@ -18,6 +18,18 @@
 
 ## [Unreleased]
 
+## [v0.3.5] - 2026-08-07
+
+### 变更
+
+- **移除 batteryless（免电）存档类型**：删除 `SaveType::Batteryless` 变体及 `--type batteryless`/`bat` 入口。GBA 免电存档（靠 `<3 from Maniac` 魔数定位）与 GB/GBC 免电存档（`db_DMG_bl.json` 布局库）相关实现、命令分发、事件字段一并移除。存档类型精简为 5 类：`eeprom4k` / `eeprom64k` / `sram` / `flash` / `fram`。
+- **i18n 补全 EEPROM**：`save.type_invalid` 的 8 种语言文案此前仅英文列出 `eeprom4k`/`eeprom64k`，其余 7 种语言漏列。现已统一补全，非法类型提示在所有语言下都完整列出 5 类。
+
+### 移除
+
+- `db_DMG_bl.json`（GB/GBC 免电存档布局库，28 条目）从 rule 子库删除，`build.rs` 不再嵌入 `GAMEDB_DMG_BL_SRC`。
+- `Event::Info` 的 `batteryless_offset` / `batteryless_size` / `batteryless_layout` 三个 NDJSON 字段移除（客户端此前未消费）。
+
 ## [v0.3.4] - 2026-08-02
 
 ### 新增

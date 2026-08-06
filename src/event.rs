@@ -72,12 +72,6 @@ pub enum Event {
         cartridge_type: Option<u8>,
         /// GB/GBC(MBC) 专属：卡带类型对应的 MBC 名称（如 "MBC5"）。GBA 恒为 null。
         mbc_name: Option<String>,
-        /// GB/GBC 免电存档（`db_DMG_bl`）：ROM 内偏移；未命中为 null。
-        batteryless_offset: Option<u64>,
-        /// 免电逻辑存档字节数。
-        batteryless_size: Option<u64>,
-        /// 免电布局：0=连续，1=bank 前半，2=bank 后半。
-        batteryless_layout: Option<u8>,
     },
 
     /// 出错（未实现、未知命令、设备异常等）。客户端可据此提示。
@@ -129,9 +123,9 @@ pub enum Event {
     },
 
     /// save-dump/write/verify：定位到的存档信息。
-    /// `offset` 仅免电存档有值（存档藏在 ROM flash 内的绝对偏移）；其余为 null。
+    /// `offset` 恒为 null（保留字段以兼容客户端契约）。
     SaveInfo {
-        /// 存档类型："SRAM" / "FLASH" / "FRAM" / "Batteryless"。
+        /// 存档类型："4K EEPROM" / "64K EEPROM" / "SRAM" / "FLASH" / "FRAM"。
         save_type: String,
         offset: Option<u64>,
         /// 存档字节数。

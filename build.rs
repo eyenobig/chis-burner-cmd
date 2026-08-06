@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-env-changed=CFB_RULE_DIR");
+    println!("cargo:rerun-if-env-changed=CFB_NO_EMBED_PROFILES");
     // CFB_RULE_DIR 覆盖 rule 数据源（beggar_chis 设置里配置的 ruleSourceDir 经
     // build-cfb.mjs 传入）；未设置时回落子库默认路径，保持独立编译不受影响。
     let rule_dir = std::env::var("CFB_RULE_DIR").unwrap_or_else(|_| "vendor/chis-burner-rule".to_string());
@@ -19,10 +20,19 @@ fn main() {
     println!("cargo:rerun-if-changed={}", rule_dir.join("profiles").display());
     println!("cargo:rerun-if-changed=src/profiles");
 
+    // CFB_NO_EMBED_PROFILES=1：跳过 rule 子库的 154 个 profile 内嵌（减小二进制），
+    // 运行时从 ~/.cfb/profiles/ 外部目录加载（首运行由客户端下载）。gamedb 仍内嵌。
+    // 注意：cfb 自带的 src/profiles（s29gl/mbc_default 兜底）始终内嵌，保证最小可用。
+    let embed_rule_profiles = std::env::var("CFB_NO_EMBED_PROFILES").map(|v| v != "1").unwrap_or(true);
+
     let mut entries: Vec<(String, PathBuf)> = Vec::new();
 
     // rule 子库 profile（默认 vendor/chis-burner-rule/profiles/{agb,dmg}，可用 CFB_RULE_DIR 覆盖）。
-    collect_dir(&rule_dir.join("profiles"), &mut entries);
+    if embed_rule_profiles {
+        collect_dir(&rule_dir.join("profiles"), &mut entries);
+    } else {
+        println!("cargo:warning=profile: CFB_NO_EMBED_PROFILES=1，跳过 rule 子库 profiles 内嵌（首运行下载）");
+    }
 
     // cfb 自带的少量内置 profile（src/profiles/*.json，如 s29gl/mbc_default）。
     collect_dir(Path::new("src/profiles"), &mut entries);
@@ -52,22 +62,18 @@ fn main() {
         entries.len()
     );
 
-    // ---- 游戏名 / 免电布局数据库（子库 games/，源自 flashGBX；同受 CFB_RULE_DIR 覆盖）----
+    // ---- 游戏名数据库（子库 games/，源自 flashGBX；同受 CFB_RULE_DIR 覆盖）----
     println!("cargo:rerun-if-changed={}", rule_dir.join("games").display());
     let agb_path = rule_dir.join("games/db_AGB.json");
     let dmg_path = rule_dir.join("games/db_DMG.json");
-    let bl_path = rule_dir.join("games/db_DMG_bl.json");
     let agb_abs = fs::canonicalize(&agb_path).unwrap_or(agb_path);
     let dmg_abs = fs::canonicalize(&dmg_path).unwrap_or(dmg_path);
-    let bl_abs = fs::canonicalize(&bl_path).unwrap_or(bl_path);
     let gamedb_gen = format!(
         "// 由 build.rs 自动生成，勿手改。\n\
          pub const GAMEDB_AGB_SRC: &str = include_str!(r\"{}\");\n\
-         pub const GAMEDB_DMG_SRC: &str = include_str!(r\"{}\");\n\
-         pub const GAMEDB_DMG_BL_SRC: &str = include_str!(r\"{}\");\n",
+         pub const GAMEDB_DMG_SRC: &str = include_str!(r\"{}\");\n",
         agb_abs.display(),
-        dmg_abs.display(),
-        bl_abs.display()
+        dmg_abs.display()
     );
     fs::write(Path::new(&out).join("gamedb_gen.rs"), gamedb_gen).unwrap();
 }
