@@ -7,6 +7,8 @@
   "op.no_rom": "Indique a ROM a gravar com --rom <arquivo>.",
   "op.no_out": "Indique o caminho de saída com --out <arquivo>.",
   "op.no_save": "Indique o arquivo de save com --file <arquivo>.",
+  "op.no_cartridge": "Nenhum cartucho detectado; {cmd} cancelado (evita gravação em vazio). Insira um cartucho e tente novamente.",
+  "op.rom_platform_mismatch": "Incompatibilidade de plataforma ROM/cartucho (ROM {rom} → cartucho {cart}): ROMs GBA apenas em cartuchos GBA; ROMs GB/GBC apenas em cartuchos GB/GBC.",
   "progress.line": "{label} {pct}% · {s}s",
   "progress.label.erase": "apagar",
   "progress.label.write": "gravar",

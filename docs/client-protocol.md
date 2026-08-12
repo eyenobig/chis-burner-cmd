@@ -43,4 +43,4 @@ The executable schema is the `Event` enum in [`src/event.rs`](../src/event.rs).
 - Do not rename or remove existing fields in schema v1.
 - Keep diagnostics off stdout.
 - Test that every stdout line independently passes `JSON.parse`.
-- Update `beggar_chis/src/services/cfb/client.js` when exposing a new operation to the desktop client.
+- Update the desktop client (e.g. [beggar_chis](https://github.com/eyenobig/beggar_chis) `src/services/cfb/client.js`) when exposing a new operation. Event schema summary: [`.claude/skills/cfb-output/SKILL.md`](../.claude/skills/cfb-output/SKILL.md).

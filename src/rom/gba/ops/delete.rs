@@ -39,27 +39,36 @@ pub fn erase_chip_logged(
     progress: &mut dyn FnMut(u64, u64),
     log: &mut dyn FnMut(&str),
 ) -> bool {
-    let total = timeout_secs.max(1);
+    // 整片擦除是固件黑盒命令(0xf1),无法按扇区分段报进度。
+    // 之前用 timeout(240s) 做进度分母,导致实际擦除(~88s)完成后进度只走到 ~37%
+    // 就瞬间跳到 100%——表现为"前慢后快"。
+    // 现在用实测经验值作为进度估算基数,让进度条匀速走到接近 100%:
+    //   32MB 芯片整片擦除实测约 88s,这里取 90s 留余量。
+    //   timeout_secs 仍作为超时保护(不用于进度)。
+    const ESTIMATED_ERASE_SECS: u64 = 90;
+    let progress_total = ESTIMATED_ERASE_SECS.max(1);
     if !link.rom_erase_chip() {
         return false;
     }
-    log(&format!("整片擦除开始（超时 {total}s）..."));
+    log(&format!("整片擦除开始（预估 ~{progress_total}s,超时 {timeout_secs}s）..."));
     let start = Instant::now();
     let mut probe = [0u8; 2];
     let mut plog = ProgressLog::new(Phase::Erase);
-    plog.report(0, total, progress, log);
+    plog.report(0, progress_total, progress, log);
 
     loop {
         if link.rom_read(0, &mut probe) && probe == [0xff, 0xff] {
-            plog.report(total, total, progress, log);
+            plog.report(progress_total, progress_total, progress, log);
             log(&format!("整片擦除完毕，耗时 {:.3}s", start.elapsed().as_secs_f64()));
             return true;
         }
         std::thread::sleep(Duration::from_millis(500));
-        let elapsed = start.elapsed().as_secs().min(total.saturating_sub(1));
-        plog.report(elapsed, total, progress, log);
-        if start.elapsed().as_secs() > timeout_secs {
-            plog.report(total, total, progress, log);
+        // 进度按预估时长线性推进,封顶在 99%(留 1% 给完成跳变)
+        let elapsed = start.elapsed().as_secs();
+        let pct_secs = elapsed.min(progress_total.saturating_sub(1));
+        plog.report(pct_secs, progress_total, progress, log);
+        if elapsed > timeout_secs {
+            plog.report(progress_total, progress_total, progress, log);
             log(&format!("整片擦除超时（{:.1}s）", start.elapsed().as_secs_f64()));
             return false;
         }

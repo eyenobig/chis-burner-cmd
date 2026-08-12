@@ -7,6 +7,8 @@
   "op.no_rom": "--rom <ファイル> で書き込む ROM を指定。",
   "op.no_out": "--out <ファイル> で出力先を指定。",
   "op.no_save": "--file <ファイル> で書込/照合するセーブを指定。",
+  "op.no_cartridge": "カートリッジ未検出、{cmd} を中止しました（空書き防止）。カートリッジを挿して再試行してください。",
+  "op.rom_platform_mismatch": "ROM とカートリッジのプラットフォーム不一致（{rom} ROM → {cart} カートリッジ）: GBA ROM は GBA カートリッジ専用、GB/GBC ROM は GB/GBC カートリッジ専用です。",
   "progress.line": "{label} {pct}% · {s}s",
   "progress.label.erase": "消去",
   "progress.label.write": "書込",

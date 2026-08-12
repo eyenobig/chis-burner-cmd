@@ -411,6 +411,32 @@ fn op_err(json: bool, cmd: &str, msg: &str) {
     }
 }
 
+/// 写入/擦除前的卡带在位判定（优化：无卡带直接中止，避免「空写 / 空擦」浪费时间
+/// 且产生误导性的失败结果）。
+///
+/// 判定与 `cmd_info` 同源：
+/// - GBA：读 flash ID + CFI，[`gba::ops::flash_present`]（有效 ID 或合理容量）。
+/// - MBC：有效 GB 头，或 CFI 给出合理容量（**空白 flash 片也算在位**——可烧空白卡）。
+///
+/// 不在位时已 `power_idle` 并发错误事件 / 打印，返回 `false`，调用方据此早退（建议返回
+/// `ExitCode::from(3)`，与「无烧录器 / 端口打不开」一致）。
+fn ensure_cartridge_present(json: bool, cmd: &str, link: &mut CartridgeLink, mbc: bool) -> bool {
+    let present = if mbc {
+        match mbc::ops::read::probe_live_header(link) {
+            mbc::ops::read::HeaderProbe::Valid(_) => true,
+            // 空片 / 读不到头：靠 CFI 容量兜底判在位（空白卡可写）。
+            mbc::ops::read::HeaderProbe::NoGame => mbc::ops::read::rom_get_size(link).0 > 0,
+        }
+    } else {
+        gba::ops::flash_present(&gba::ops::read_info(link))
+    };
+    if !present {
+        device::power_idle(link);
+        op_err(json, cmd, &i18n::tf("op.no_cartridge", &[("cmd", cmd)]));
+    }
+    present
+}
+
 fn log_emit(json: bool, m: &str) {
     if json {
         emit(&Event::Log { message: m.to_string() });
@@ -475,6 +501,28 @@ fn finish(json: bool, cmd: &str, ok: bool, bytes: u64, mm: u32, secs: f64) -> Ex
     if ok { ExitCode::SUCCESS } else { ExitCode::from(1) }
 }
 
+/// 从 ROM 文件头判别平台：GBA（0xB2==0x96 + 头校验）/ GB·GBC（GB 头校验）/ 无法判定。
+/// 与 `cmd_rom_info` 的判别同源。头不全或校验不过时返回 [`CartridgeKind::Unknown`]，
+/// 调用方据此只对「确定的不匹配」拦截，避免误伤小文件 / 空片。
+fn detect_rom_platform(bytes: &[u8]) -> CartridgeKind {
+    if bytes.len() >= 0xC0 && gba::ops::is_gba_header(bytes) {
+        CartridgeKind::Gba
+    } else if bytes.len() >= 0x150 && mbc::ops::read::is_gb_header(bytes) {
+        CartridgeKind::GbMbc
+    } else {
+        CartridgeKind::Unknown
+    }
+}
+
+/// 卡带/ROM 平台的本地化名称（"GBA" / "GB/GBC" / "未识别/空片"）。
+fn kind_label(kind: CartridgeKind) -> String {
+    i18n::t(match kind {
+        CartridgeKind::Gba => "kind.gba",
+        CartridgeKind::GbMbc => "kind.gb_mbc",
+        CartridgeKind::Unknown => "kind.unknown",
+    })
+}
+
 /// `cfb burn --rom <f> [--mbc] [--no-erase]` —— 写入 ROM。
 pub fn cmd_burn(
     json: bool,
@@ -493,9 +541,33 @@ pub fn cmd_burn(
             return ExitCode::from(2);
         }
     };
+
+    // ROM 平台须与目标卡带一致：GBA ROM 只能烧到 GBA 卡，GB/GBC ROM 只能烧到 GB/GBC 卡。
+    // 头无法判定（小文件 / 空片）时不拦截，只对「确定的不匹配」报错，避免误伤。
+    let rom_kind = detect_rom_platform(&data);
+    let target_kind = if mbc { CartridgeKind::GbMbc } else { CartridgeKind::Gba };
+    if rom_kind != CartridgeKind::Unknown && rom_kind != target_kind {
+        let rom_label = kind_label(rom_kind);
+        let cart_label = kind_label(target_kind);
+        op_err(
+            json,
+            "burn",
+            &i18n::tf(
+                "op.rom_platform_mismatch",
+                &[("rom", rom_label.as_str()), ("cart", cart_label.as_str())],
+            ),
+        );
+        return ExitCode::from(2);
+    }
+
     let Some(mut link) = open_powered(json, "burn", port, mbc) else {
         return ExitCode::from(3);
     };
+
+    // 无卡带直接中止，避免空写（GBA 读 flash ID/CFI；MBC 探头 + CFI 容量兜底）。
+    if !ensure_cartridge_present(json, "burn", &mut link, mbc) {
+        return ExitCode::from(3);
+    }
 
     // GBA：对齐 beggar_socket，每次 mission 软件插拔清 MCU 残留后再烧。
     if !mbc {
@@ -594,6 +666,10 @@ pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
     let Some(mut link) = open_powered(json, "erase", port, mbc) else {
         return ExitCode::from(3);
     };
+    // 无卡带直接中止，避免空擦。
+    if !ensure_cartridge_present(json, "erase", &mut link, mbc) {
+        return ExitCode::from(3);
+    }
     let t0 = std::time::Instant::now();
     let mut last_mb = 0u64;
     let mut log = |m: &str| log_emit(json, m);
@@ -869,6 +945,10 @@ pub fn cmd_save_write(
     let Some(mut link) = open_powered(json, cmd, port, mbc) else {
         return ExitCode::from(3);
     };
+    // 无卡带直接中止，避免空写存档。
+    if !ensure_cartridge_present(json, cmd, &mut link, mbc) {
+        return ExitCode::from(3);
+    }
     let mut last_mb = u64::MAX;
     let mut progress = |d: u64, t: u64| progress_emit(json, d, t, &mut last_mb);
     let mut log = |m: &str| log_emit(json, m);
@@ -980,6 +1060,10 @@ pub fn cmd_save_erase(
     let Some(mut link) = open_powered(json, cmd, port, mbc) else {
         return ExitCode::from(3);
     };
+    // 无卡带直接中止，避免空擦存档（save-erase 即写入全 0xFF）。
+    if !ensure_cartridge_present(json, cmd, &mut link, mbc) {
+        return ExitCode::from(3);
+    }
     let mut last_mb = u64::MAX;
     let mut progress = |d: u64, t: u64| progress_emit(json, d, t, &mut last_mb);
     let mut log = |m: &str| log_emit(json, m);
@@ -1162,5 +1246,31 @@ mod tests {
         assert_eq!(SaveType::Sram.label(), "SRAM");
         assert_eq!(SaveType::Eeprom4k.eeprom_size(), Some(512));
         assert_eq!(SaveType::Eeprom64k.eeprom_size(), Some(8192));
+    }
+
+    #[test]
+    fn detect_rom_platform_gba_vs_gb() {
+        // GBA 头 → GBA（0xC0 < 0x150，不会同时过 GB 头校验）。
+        let gba = synthetic_gba_header();
+        assert_eq!(detect_rom_platform(&gba), CartridgeKind::Gba);
+
+        // GB/GBC 头 → GbMbc，且不应被误判成 GBA。
+        let mut gb = [0u8; 0x150];
+        gb[0x134..0x13b].copy_from_slice(b"POKEMON");
+        gb[0x143] = 0x80; // CGB
+        gb[0x147] = 0x10; // MBC3+TIMER
+        gb[0x148] = 0x05;
+        gb[0x149] = 0x03;
+        let mut checksum = 0u8;
+        for &byte in &gb[0x134..=0x14c] {
+            checksum = checksum.wrapping_sub(byte).wrapping_sub(1);
+        }
+        gb[0x14d] = checksum;
+        assert_eq!(detect_rom_platform(&gb), CartridgeKind::GbMbc);
+        assert!(!gba::ops::is_gba_header(&gb));
+
+        // 太小 / 全 FF → 无法判定（不拦截，避免误伤小文件 / 空片）。
+        assert_eq!(detect_rom_platform(&[0u8; 0x80]), CartridgeKind::Unknown);
+        assert_eq!(detect_rom_platform(&[0xFFu8; 0x200]), CartridgeKind::Unknown);
     }
 }

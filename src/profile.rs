@@ -282,6 +282,17 @@ pub fn load_all() -> Vec<Profile> {
             }
         }
     }
+    if builtins.is_empty() {
+        // 完全无 profile：既无内置（剥离构建）又无外部 rule（首运行未下载）。
+        // 给出明确指引，避免后续烧录因"找不到 profile"而莫名其妙失败。
+        let dir = external_dir()
+            .map(|d| d.display().to_string())
+            .unwrap_or_else(|| "~/.cfb/profiles/".into());
+        eprintln!(
+            "profile: 无可用 profile（内置为空且外部目录 {dir} 无文件）。\n\
+             请在客户端首运行时下载 rule，或手动把 profiles 放到 {dir}。"
+        );
+    }
     builtins
 }
 

@@ -76,8 +76,9 @@ cargo run -- --lang en detect
 {"type":"summary","command":"detect","burners":1}
 ```
 
-格式是稳定契约，定义见 [docs/client-protocol.md](docs/client-protocol.md) 与
-[src/event.rs](src/event.rs)；新增命令请遵循它，保证客户端稳定解析。
+格式是稳定契约，定义见 [docs/client-protocol.md](docs/client-protocol.md)、
+[src/event.rs](src/event.rs) 与 [.claude/skills/cfb-output](.claude/skills/cfb-output/SKILL.md)。
+新增命令请遵循它，保证客户端稳定解析。客户端经 Release 二进制或绝对路径源码接入，**不要求**同级相对目录。
 
 设备识别用 [`serialport`](https://crates.io/crates/serialport) crate，它在三大平台统一提供 USB
 VID/PID，无需像 C# 版那样按平台分别走 WMI/ioreg//sys。注意 `detect` 只列出**当前实际接入**的端口

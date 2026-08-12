@@ -1,6 +1,6 @@
 # CI / 构建（GitHub Actions）
 
-仓库用一条 GitHub Actions 工作流 [.github/workflows/build.yml](../.github/workflows/build.yml) 在三个平台上跨平台编译 `cfb`，并产出 **Tauri sidecar 命名**的二进制，可直接丢进 [beggar_chis](../../beggar_chis)/`src-tauri/binaries/`。
+仓库用一条 GitHub Actions 工作流 [.github/workflows/build.yml](../.github/workflows/build.yml) 在三个平台上跨平台编译 `cfb`，并产出 **Tauri sidecar 命名**的二进制，供客户端（如 [beggar_chis](https://github.com/eyenobig/beggar_chis)）下载进 `src-tauri/binaries/` 或由其 `ensure:cfb` 拉取 Release。**不要求**与客户端同级相对目录。
 
 ## 触发条件（双重门禁）
 
@@ -82,7 +82,7 @@ git push origin v0.1.0
   （换 triple / 换 tag 号即对应其它平台/版本）
 - 或 GitHub **Releases** 页手动下载，或 Actions 运行页 **Artifacts** 区按目标下载 zip。
 
-放进 [beggar_chis](../../beggar_chis)/`src-tauri/binaries/`，按当前构建目标挑文件名（Tauri 打包时按 triple 自动选）。
+放进客户端 sidecar 目录（例如 beggar_chis 的 `src-tauri/binaries/`），按当前构建目标挑文件名（Tauri 打包时按 triple 自动选）。客户端也可经 `ensure:cfb` 自动从 Release 下载，无需本机同级源码树。
 
 ## 不需要配 secret
 

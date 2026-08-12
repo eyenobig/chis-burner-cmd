@@ -7,6 +7,8 @@
   "op.no_rom": "请用 --rom <文件> 指定要烧录的 ROM。",
   "op.no_out": "请用 --out <文件> 指定导出路径。",
   "op.no_save": "请用 --file <文件> 指定要写入/校验的存档。",
+  "op.no_cartridge": "未检测到卡带，已中止 {cmd}（避免空写）。请插好卡带后重试。",
+  "op.rom_platform_mismatch": "ROM 平台({rom})与目标卡带({cart})不匹配：GBA ROM 只能烧到 GBA 卡带，GB/GBC ROM 只能烧到 GB/GBC 卡带。",
   "progress.line": "{label} {pct}% · {s}s",
   "progress.label.erase": "擦除",
   "progress.label.write": "写入",

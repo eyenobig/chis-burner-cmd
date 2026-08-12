@@ -180,39 +180,50 @@ pub fn burn(
             }
         }
     } else {
-        log("逐扇区即擦即写（--sector）");
-        let mut write_plog = ProgressLog::new(Phase::Write);
-        let mut b = 0u64;
-        while b < length {
-            let end = (b + SECTOR_U64).min(length);
-            // profile 序列（FlashGBX 字节地址经 run_gba >>1）优先；失败回落 beggar_socket 硬编码。
+        // --sector：先逐扇区擦除整个芯片（清除所有扇区），再连续写入。
+        // 擦除和写入分别用独立 ProgressLog 上报进度，避免交织模式下擦除不报进度
+        // 导致的"前慢后快"假象（原实现只对写报字节进度，擦除卡顿不可见）。
+        let chip_size = if info.device_size > 0 { info.device_size } else { 32 * 1024 * 1024 };
+        log(&format!("逐扇区擦除全片（--sector, {chip_size} B）"));
+        let total_erase_sectors = (chip_size + SECTOR_U64 - 1) / SECTOR_U64;
+        let mut erase_plog = ProgressLog::new(Phase::Erase);
+        erase_plog.report(0, total_erase_sectors, progress, log);
+        let mut erase_ok = true;
+        let mut off = 0u64;
+        while off < chip_size {
             let ok = match &prof {
                 Some(p) => {
-                    sector_erase_profile(link, p, b as u32, 5) || erase_sector(link, b as u32, 5)
+                    sector_erase_profile(link, p, off as u32, 5) || erase_sector(link, off as u32, 5)
                 }
-                None => erase_sector(link, b as u32, 5),
+                None => erase_sector(link, off as u32, 5),
             };
             if !ok {
-                log(&format!("扇区 0x{b:08X} 擦除失败"));
-                res.first_bad = Some(b);
+                log(&format!("扇区 0x{off:08X} 擦除失败"));
+                res.first_bad = Some(off);
+                erase_ok = false;
                 break;
             }
-            // 先打 log，再包 progress（避免与 log 借用冲突）
-            let fail = {
-                let mut write_progress = |d: u64, t: u64| {
-                    progress(d, t);
-                    if write_plog.should_log(d, t) {
-                        log(&write_plog.format(d, t));
-                    }
-                };
-                program_flow(link, rom, b, end, buf_wr, &mut res, length, &mut write_progress)
+            off += SECTOR_U64;
+            // 擦除进度：已擦扇区 / 芯片总扇区
+            let done = off / SECTOR_U64;
+            erase_plog.report(done, total_erase_sectors, progress, log);
+        }
+
+        if erase_ok {
+            log(&format!("擦除完毕（{total_erase_sectors} 扇区），开始写入"));
+            let mut write_plog = ProgressLog::new(Phase::Write);
+            let mut write_progress = |d: u64, t: u64| {
+                progress(d, t);
+                if write_plog.should_log(d, t) {
+                    log(&write_plog.format(d, t));
+                }
             };
-            if let Some(addr) = fail {
-                log(&format!("写入失败 @0x{addr:08X}（已 DTR 重试×4）"));
-                res.first_bad = Some(addr);
-                break;
+            if let Some(fail) =
+                program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress)
+            {
+                log(&format!("写入失败 @0x{fail:08X}（已 DTR 重试×4）"));
+                res.first_bad = Some(fail);
             }
-            b += SECTOR_U64;
         }
     }
 

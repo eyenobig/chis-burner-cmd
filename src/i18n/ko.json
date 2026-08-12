@@ -7,6 +7,8 @@
   "op.no_rom": "--rom <파일>로 쓸 ROM을 지정.",
   "op.no_out": "--out <파일>로 출력 경로를 지정.",
   "op.no_save": "--file <파일>로 쓰기/검증할 세이브를 지정.",
+  "op.no_cartridge": "카트리지 미검출, {cmd} 중단 (공책 방지). 카트리지를 장착 후 재시도.",
+  "op.rom_platform_mismatch": "ROM/카트리지 플랫폼 불일치 ({rom} ROM → {cart} 카트리지): GBA ROM은 GBA 카트리지 전용, GB/GBC ROM은 GB/GBC 카트리지 전용입니다.",
   "progress.line": "{label} {pct}% · {s}s",
   "progress.label.erase": "지우기",
   "progress.label.write": "쓰기",

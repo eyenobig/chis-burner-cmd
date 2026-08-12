@@ -7,6 +7,8 @@
   "op.no_rom": "Specify the ROM to burn with --rom <file>.",
   "op.no_out": "Specify the output path with --out <file>.",
   "op.no_save": "Specify the save file with --file <file>.",
+  "op.no_cartridge": "No cartridge detected; {cmd} aborted (empty write prevented). Insert a cartridge and retry.",
+  "op.rom_platform_mismatch": "ROM/cartridge platform mismatch ({rom} ROM → {cart} cart): GBA ROMs can only be written to GBA cartridges, GB/GBC ROMs only to GB/GBC cartridges.",
   "progress.line": "{label} {pct}% · {s}s",
   "progress.label.erase": "erase",
   "progress.label.write": "write",

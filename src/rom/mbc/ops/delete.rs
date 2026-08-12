@@ -91,12 +91,15 @@ pub fn erase_chip_logged(
         .max(180_000)
         .max(timeout_secs.saturating_mul(1000));
     let hard_timeout = Duration::from_millis(hard_timeout_ms);
-    let timeout_secs_disp = (hard_timeout_ms / 1000).max(1);
+
+    // 进度分母:CFI typical(524s)严重偏大,实测整片擦除稳定约 181s。
+    // 用实测经验值 190s 作为进度基数(留 ~5% 余量),让进度条匀速走到接近 100%。
+    // min_accept_ms / hard_timeout_ms 仍用 CFI 值做超时保护(不影响进度)。
+    const ESTIMATED_ERASE_SECS: u64 = 190;
+    let progress_total = ESTIMATED_ERASE_SECS;
 
     log(&format!(
-        "整片擦除开始（CFI ~{:.1}s，最短等待 {:.1}s，硬超时 {:.0}s）...",
-        erase_time_ms as f64 / 1000.0,
-        min_accept_ms as f64 / 1000.0,
+        "整片擦除开始（预估 ~{progress_total}s, 硬超时 {:.0}s）...",
         hard_timeout.as_secs_f64()
     ));
 
@@ -115,13 +118,13 @@ pub fn erase_chip_logged(
     let mut probe = [0u8; 1];
     let mut ff_streak = 0u32;
     let mut plog = ProgressLog::new(Phase::Erase);
-    plog.report(0, timeout_secs_disp, progress, log);
+    plog.report(0, progress_total, progress, log);
 
     loop {
         std::thread::sleep(Duration::from_millis(1000));
         let elapsed_ms = start.elapsed().as_millis() as u64;
-        let elapsed_secs = start.elapsed().as_secs().min(timeout_secs_disp.saturating_sub(1));
-        plog.report(elapsed_secs, timeout_secs_disp, progress, log);
+        let elapsed_secs = start.elapsed().as_secs().min(progress_total.saturating_sub(1));
+        plog.report(elapsed_secs, progress_total, progress, log);
 
         switch_bank(link, 0, MbcKind::Mbc5);
         if !link.gbc_read(probe_addr, &mut probe) {
@@ -134,7 +137,7 @@ pub fn erase_chip_logged(
                 link.gbc_write(0x00, &[0xf0]);
                 std::thread::sleep(Duration::from_millis(100));
                 if blank_check_banks(link, 16) {
-                    plog.report(timeout_secs_disp, timeout_secs_disp, progress, log);
+                    plog.report(progress_total, progress_total, progress, log);
                     log(&format!(
                         "整片擦除完毕（阵列空白确认），耗时 {:.3} s",
                         start.elapsed().as_secs_f64()
@@ -151,7 +154,7 @@ pub fn erase_chip_logged(
         if start.elapsed() >= hard_timeout {
             link.gbc_write(0x00, &[0xf0]);
             if blank_check_banks(link, 16) {
-                plog.report(timeout_secs_disp, timeout_secs_disp, progress, log);
+                plog.report(progress_total, progress_total, progress, log);
                 log(&format!(
                     "整片擦除完毕（超时边界），耗时 {:.3} s",
                     start.elapsed().as_secs_f64()
@@ -162,7 +165,7 @@ pub fn erase_chip_logged(
                 "整片擦除超时（{:.1}s）且阵列未空",
                 start.elapsed().as_secs_f64()
             ));
-            plog.report(timeout_secs_disp, timeout_secs_disp, progress, log);
+            plog.report(progress_total, progress_total, progress, log);
             return false;
         }
     }

@@ -7,6 +7,8 @@
   "op.no_rom": "Indiquez la ROM à graver avec --rom <fichier>.",
   "op.no_out": "Indiquez le chemin de sortie avec --out <fichier>.",
   "op.no_save": "Indiquez le fichier de sauvegarde avec --file <fichier>.",
+  "op.no_cartridge": "Aucune cartouche détectée ; {cmd} abandonné (écriture à vide évitée). Insérez une cartouche et réessayez.",
+  "op.rom_platform_mismatch": "Incompatibilité ROM/cartouche ({rom} ROM → cartouche {cart}) : les ROM GBA ne s'écrivent que sur cartouches GBA, les ROM GB/GBC sur cartouches GB/GBC.",
   "progress.line": "{label} {pct}% · {s}s",
   "progress.label.erase": "effacer",
   "progress.label.write": "écrire",

@@ -7,6 +7,8 @@
   "op.no_rom": "Gib die zu brennende ROM mit --rom <Datei> an.",
   "op.no_out": "Gib den Ausgabepfad mit --out <Datei> an.",
   "op.no_save": "Gib die Save-Datei mit --file <Datei> an.",
+  "op.no_cartridge": "Kein Modul erkannt; {cmd} abgebrochen (Leerschreiben vermieden). Modul einsetzen und erneut versuchen.",
+  "op.rom_platform_mismatch": "ROM/Modul-Plattform passt nicht ({rom}-ROM → {cart}-Modul): GBA-ROMs nur auf GBA-Module, GB/GBC-ROMs nur auf GB/GBC-Module.",
   "progress.line": "{label} {pct}% · {s}s",
   "progress.label.erase": "löschen",
   "progress.label.write": "schreiben",
