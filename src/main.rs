@@ -83,6 +83,18 @@ fn main() -> ExitCode {
 
     let json = has_flag(&args, "--json");
     let port = opt_value(&args, "--port");
+    // GB 总线代次兜底：默认恒 MBC5（ChisFlash 接线）；--mbc-kind mbc1|mbc2|mbc3|mbc5 手动覆盖
+    let mbc_kind = match opt_value(&args, "--mbc-kind").as_deref() {
+        None | Some("") => None,
+        Some("mbc1") => Some(rom::mbc_kind(1)),
+        Some("mbc2") => Some(rom::mbc_kind(2)),
+        Some("mbc3") => Some(rom::mbc_kind(3)),
+        Some("mbc5") => Some(rom::mbc_kind(5)),
+        Some(other) => {
+            eprintln!("cfb: 未知 --mbc-kind {other}（可选 mbc1|mbc2|mbc3|mbc5）");
+            return ExitCode::from(2);
+        }
+    };
     let clear = has_flag(&args, "--clear");
     let mbc = has_flag(&args, "--mbc");
 
@@ -114,21 +126,23 @@ fn main() -> ExitCode {
             None => arg_required(json, "rom-info", "op.no_rom"),
         },
         "burn" | "write" => match opt_value(&args, "--rom") {
-            // GBA 默认整片擦后连续写（对齐 WinForms / tmp 成功路径）；`--sector` 才逐扇区。
+            // 两线统一：默认快路径（只擦 ROM 覆盖范围）；`--chip-erase` 显式整片清场。
+            // （GBA 原来的 `--sector` 反向开关已移除，减少参数。）
             // `--no-erase` 跳过擦除直接写入（仅用于测纯写入吞吐，要求 flash 已是擦除态）。
             Some(f) => rom::cmd_burn(
                 json,
                 port,
                 &f,
                 mbc,
-                !has_flag(&args, "--sector"),
+                has_flag(&args, "--chip-erase"),
                 !has_flag(&args, "--no-ppb"),
                 !has_flag(&args, "--no-verify"),
                 has_flag(&args, "--no-erase"),
+                mbc_kind,
             ),
             None => arg_required(json, "burn", "op.no_rom"),
         },
-        "erase" => rom::cmd_erase(json, port, mbc),
+        "erase" => rom::cmd_erase(json, port, mbc, mbc_kind),
         "rtc" => rom::cmd_rtc_read(json, port, mbc),
         "dump" => match opt_value(&args, "--out") {
             Some(f) => {

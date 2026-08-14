@@ -304,6 +304,21 @@ fn parse_one(src: &str, _label: &str) -> Option<Profile> {
 ///
 /// 多条同 ID 时优先 **ChisFlash** 名称（本机卡带品牌），其次带明确容量的
 /// FlashGBX/iG 条目，避免命中笼统的「GBA 默认」回落 profile。
+/// 均匀扇区大小（字节）：profile `sector_size` 为纯数字且在 4KiB–256KiB 时返回。
+/// 列表布局（非均匀扇区）返回 None——调用方回落 CFI/硬编码路径。
+pub fn uniform_sector_size(p: &Profile) -> Option<u32> {
+    if p.sector_size_from_cfi {
+        return None;
+    }
+    if let serde_json::Value::Number(n) = &p.sector_size {
+        let v = n.as_u64()?;
+        if (4096..=256 * 1024).contains(&v) {
+            return Some(v as u32);
+        }
+    }
+    None
+}
+
 pub fn match_by_id<'a>(profiles: &'a [Profile], id: &[u8; 8]) -> Option<&'a Profile> {
     let key = [id[0], id[1], id[2], id[3]];
     let mut hits: Vec<&Profile> = profiles.iter().filter(|p| p.id_keys().contains(&key)).collect();

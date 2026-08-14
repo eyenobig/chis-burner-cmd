@@ -73,8 +73,11 @@ pub fn switch_bank_mbcx(link: &mut CartridgeLink, bank: u32, kind: MbcKind, _fla
 }
 
 /// 线性 ROM 偏移 → GB 总线地址（按 MBC 代次分发）。
-/// - MBC3：bank 0 → 0x0000-0x3FFF（固定区）；其余 → 0x4000-0x7FFF。
-/// - MBC5 / ChisFlash MBCX：恒 0x4000 + 低 14 位（bank 0 也在 0x4000 窗口，见 FlashGBX start_addr）。
+/// - MBC3 bank0：0x0000-0x3FFF 固定区；其余（含 MBC5 全部线性 bank）→ 0x4000 + 低 14 位。
+/// ⚠ MBC5 的「真机开机窗」（芯片 0x0-0x3FFF 隐藏区，总线 0x0000）**不在本函数语义里**：
+/// 它在 ROM 偏移 0（bank0 内容）但固件 0xFC 对 0x0000 窗 NAK，须走
+/// write.rs 的 program_boot_window（AMD 单字编程）。线性 bank0 = ROM bank1 = reg1。
+/// ⚠ 擦除禁止为隐藏区单独发 0x30（扇区 0 常规擦已覆盖；同块二次 0x30 会卡死整卡）。
 pub fn bus_addr(rom_off: u32, kind: MbcKind) -> u32 {
     let bank = rom_off >> 14;
     let base = match kind {
@@ -84,6 +87,18 @@ pub fn bus_addr(rom_off: u32, kind: MbcKind) -> u32 {
         _ => 0x4000,
     };
     base + (rom_off & 0x3fff)
+}
+
+/// 按 bank 设置总线窗口：MBC5 bank0 显式写 reg=0（对齐隐藏区读取条件；固件对
+/// reg0 的 0xFC 编程会 NAK，故编程走 0x0000 固定窗而非 C# 的 0x4000+reg0 路径）。
+/// 其余 bank 走 [`switch_bank`]。
+pub fn switch_window(link: &mut CartridgeLink, bank: u32, kind: MbcKind) {
+    if kind == MbcKind::Mbc5 && bank == 0 {
+        link.gbc_write(0x3000, &[0x00]);
+        link.gbc_write(0x2000, &[0x00]);
+    } else {
+        switch_bank(link, bank, kind);
+    }
 }
 
 /// 线性 ROM 偏移 → flash 芯片物理字节地址（用于扇区擦覆盖计算）。
@@ -199,6 +214,25 @@ pub fn rom_cal_erase_time_ms(link: &mut CartridgeLink) -> u64 {
 /// Intel/Numonyx JS28F256 Autoselect：强制 buffer write = 256。
 pub fn is_js28f256(id: &[u8; 4]) -> bool {
     *id == [0x89, 0x7e, 0x22, 0x01]
+}
+
+/// Spansion/AMD S29GL-S 及常见 clone（Autoselect `01 7E 22 xx`）。
+/// 2026-08-14 probe 实测：单次 0x30 恰清 8×16KB bank = **128KB** 擦除块。
+pub fn is_s29gl_s_family(id: &[u8; 4]) -> bool {
+    id[0] == 0x01 && id[1] == 0x7e && id[2] == 0x22
+}
+
+/// 实际擦除步进：GL-S/clone 强制 128KB；其余信 CFI（4KB–256KB），缺失回落 64KB。
+/// 过细步进（如 16KB）在粗扇区芯片上目标数 ×N，空白跳查开销线性放大（实测 ~0.46s/目标）。
+pub fn effective_erase_sector(id: &[u8; 4], cfi_sector: u32) -> u32 {
+    if is_s29gl_s_family(id) {
+        return 128 * 1024;
+    }
+    if cfi_sector >= 0x1000 && cfi_sector <= 256 * 1024 {
+        cfi_sector
+    } else {
+        64 * 1024
+    }
 }
 
 /// 从卡带读 1 字节，自带 1 次重试以应对上电后第一条命令被 MCU 吞掉。

@@ -33,13 +33,25 @@ fn program_flow(
     progress: &mut dyn FnMut(u64, u64),
 ) -> Option<u64> {
     let mut pos = from;
+    // 包级原地重试：新批次烧录器持续写入会偶发掉包（rom_program 内部 4 次 MCU 复位
+    // 重试仍不够，2026-08-15 实测 4-16KB 处挂）；这里失败后 0xF0+复位再重发同一包，
+    // 同包连续 5 次不过才真正放弃（原地续传，不整段重来）。
+    let mut fail_streak = 0u32;
     while pos < to {
         let len = ((to - pos) as usize).min(PACKET);
         let pk = &rom[pos as usize..pos as usize + len];
 
         if !link.rom_program(pos as u32, pk, buf_wr) {
-            return Some(pos);
+            fail_streak += 1;
+            if fail_streak >= 5 {
+                return Some(pos);
+            }
+            link.reset_mcu_buffer();
+            link.rom_write(0, &[0xf0, 0x00]);
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            continue;
         }
+        fail_streak = 0;
 
         pos += len as u64;
         res.bytes_written += len as u64;
@@ -75,7 +87,7 @@ fn find_bad_sectors(link: &mut CartridgeLink, rom: &[u8], total: u64) -> (Vec<u6
 
 /// 完整烧录：(可选解锁PPB) → (整片或逐扇区)擦除+编程 → 校验+修复。
 ///
-/// 默认 `chip_erase=true`（整片擦后连续写）；`--sector` 走逐扇区即擦即写。
+/// 默认 `chip_erase=false`（逐扇区只擦 ROM 范围，快路径）；`--chip-erase` 整片清场。
 pub fn burn(
     link: &mut CartridgeLink,
     rom: &[u8],
@@ -164,33 +176,55 @@ pub fn burn(
             log("整片擦除失败");
             res.first_bad = Some(0);
         } else {
+            // 擦后稳定化：0xF0 复位 + 短延时。刚出擦除态的 flash 状态机可能残留
+            // status 模式，立刻编程会在 0x0 处失败（DTR×4 挂，2026-08-15 实测）。
+            link.rom_write(0, &[0xf0, 0x00]);
+            std::thread::sleep(std::time::Duration::from_millis(100));
             log("开始写入（整片擦后连续编程，对齐 WinForms mission_programRom）");
-            let mut write_plog = ProgressLog::new(Phase::Write);
-            let mut write_progress = |d: u64, t: u64| {
-                progress(d, t);
-                if write_plog.should_log(d, t) {
-                    log(&write_plog.format(d, t));
+            let mut write_attempt = 0u32;
+            loop {
+                write_attempt += 1;
+                let mut write_plog = ProgressLog::new(Phase::Write);
+                let mut write_progress = |d: u64, t: u64| {
+                    progress(d, t);
+                    if write_plog.should_log(d, t) {
+                        log(&write_plog.format(d, t));
+                    }
+                };
+                match program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress) {
+                    None => break,
+                    Some(fail) if write_attempt < 3 => {
+                        // 写入失败：软插拔（断电重连清 flash/MCU 状态）后整段重写
+                        log(&format!(
+                            "写入失败 @0x{fail:08X}（第{write_attempt}次），软复位后重试整段写入 ..."
+                        ));
+                        let _ = link.soft_unplug_gba();
+                        link.rom_write(0, &[0xf0, 0x00]);
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                    Some(fail) => {
+                        log(&format!("写入失败 @0x{fail:08X}（已重试整段×3）"));
+                        res.first_bad = Some(fail);
+                        break;
+                    }
                 }
-            };
-            if let Some(fail) =
-                program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress)
-            {
-                log(&format!("写入失败 @0x{fail:08X}（已 DTR 重试×4）"));
-                res.first_bad = Some(fail);
             }
         }
     } else {
-        // --sector：先逐扇区擦除整个芯片（清除所有扇区），再连续写入。
-        // 擦除和写入分别用独立 ProgressLog 上报进度，避免交织模式下擦除不报进度
-        // 导致的"前慢后快"假象（原实现只对写报字节进度，擦除卡顿不可见）。
-        let chip_size = if info.device_size > 0 { info.device_size } else { 32 * 1024 * 1024 };
-        log(&format!("逐扇区擦除全片（--sector, {chip_size} B）"));
-        let total_erase_sectors = (chip_size + SECTOR_U64 - 1) / SECTOR_U64;
+        // 默认快路径：**只擦 ROM 覆盖的扇区**（两线统一语义，原 --sector 开关已移除）。
+        // 2026-08-15 起：原实现逐扇区擦全片（只是换擦法不省时）；现在 ROM 范围之外的
+        // 旧内容会保留——需要彻底清场时用默认整片擦（GUI 勾选「全片清理」）。
+        // 擦除和写入分别用独立 ProgressLog 上报进度。
+        let erase_end = length;
+        let total_erase_sectors = (erase_end + SECTOR_U64 - 1) / SECTOR_U64;
+        log(&format!(
+            "逐扇区擦除 ROM 范围（快路径, 0x{erase_end:X} B, {total_erase_sectors} 扇区）"
+        ));
         let mut erase_plog = ProgressLog::new(Phase::Erase);
         erase_plog.report(0, total_erase_sectors, progress, log);
         let mut erase_ok = true;
         let mut off = 0u64;
-        while off < chip_size {
+        while off < erase_end {
             let ok = match &prof {
                 Some(p) => {
                     sector_erase_profile(link, p, off as u32, 5) || erase_sector(link, off as u32, 5)
@@ -210,19 +244,36 @@ pub fn burn(
         }
 
         if erase_ok {
+            // 擦后稳定化 + 写入重试（同整片擦分支；刚出擦除态立刻编程会在 0x0 处失败）
+            link.rom_write(0, &[0xf0, 0x00]);
+            std::thread::sleep(std::time::Duration::from_millis(100));
             log(&format!("擦除完毕（{total_erase_sectors} 扇区），开始写入"));
-            let mut write_plog = ProgressLog::new(Phase::Write);
-            let mut write_progress = |d: u64, t: u64| {
-                progress(d, t);
-                if write_plog.should_log(d, t) {
-                    log(&write_plog.format(d, t));
+            let mut write_attempt = 0u32;
+            loop {
+                write_attempt += 1;
+                let mut write_plog = ProgressLog::new(Phase::Write);
+                let mut write_progress = |d: u64, t: u64| {
+                    progress(d, t);
+                    if write_plog.should_log(d, t) {
+                        log(&write_plog.format(d, t));
+                    }
+                };
+                match program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress) {
+                    None => break,
+                    Some(fail) if write_attempt < 3 => {
+                        log(&format!(
+                            "写入失败 @0x{fail:08X}（第{write_attempt}次），软复位后重试整段写入 ..."
+                        ));
+                        let _ = link.soft_unplug_gba();
+                        link.rom_write(0, &[0xf0, 0x00]);
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                    Some(fail) => {
+                        log(&format!("写入失败 @0x{fail:08X}（已重试整段×3）"));
+                        res.first_bad = Some(fail);
+                        break;
+                    }
                 }
-            };
-            if let Some(fail) =
-                program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress)
-            {
-                log(&format!("写入失败 @0x{fail:08X}（已 DTR 重试×4）"));
-                res.first_bad = Some(fail);
             }
         }
     }

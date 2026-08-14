@@ -30,9 +30,28 @@ pub fn erase_chip(link: &mut CartridgeLink, timeout_secs: u64) -> bool {
 /// 同 [`erase_chip`]，但按「已用秒/超时秒」发 progress 心跳 + 节流 log。
 ///
 /// 整片擦除耗时约 1–2 分钟，期间无法按字节分段汇报进度；参照 NDJSON 契约
-/// （`event.rs`：整片擦除心跳 done/total 为已用秒/超时秒）与 MBC 的
-/// `erase_chip_logged`，每轮轮询后发一次心跳，让客户端进度条按时间线性推进，
-/// 避免「擦除阶段死停 0%、进入写入后突然跳满」的前慢后快观感。
+/// C# 式 flash 复位序列：Autoselect 进出 + 0xF0 回到数组读模式。
+/// ⚠ 擦除完成后不复位，flash 会残留 status/擦除模式 → 后续写入 DTR 卡死
+/// （「cfb 清空后半死」事故根源，2026-08-15；C# 每步都带此复位）。
+pub fn gba_reset_flash(link: &mut CartridgeLink) {
+    link.rom_write(0, &[0x90, 0x00]);
+    link.rom_write(0, &[0x00, 0x00]);
+    link.rom_write(0, &[0xf0, 0x00]);
+    std::thread::sleep(Duration::from_millis(20));
+}
+
+/// 多点数组读空白校验（复位后调用才可信：裸读可能读到 status 的假 FF）。
+fn array_blank_at(link: &mut CartridgeLink, addrs: &[u32]) -> bool {
+    let mut b = [0u8; 2];
+    for &a in addrs {
+        if !link.rom_read(a, &mut b) || b != [0xff, 0xff] {
+            return false;
+        }
+    }
+    true
+}
+
+/// 整片擦除 + 心跳：对齐 C# `mission_eraseChip_mbc5` + FlashGBX profile（120s 超时）。
 pub fn erase_chip_logged(
     link: &mut CartridgeLink,
     timeout_secs: u64,
@@ -58,9 +77,14 @@ pub fn erase_chip_logged(
 
     loop {
         if link.rom_read(0, &mut probe) && probe == [0xff, 0xff] {
-            plog.report(progress_total, progress_total, progress, log);
-            log(&format!("整片擦除完毕，耗时 {:.3}s", start.elapsed().as_secs_f64()));
-            return true;
+            // 先复位再多点校验：裸读可能命中 status 假 FF，未真擦完就返回
+            gba_reset_flash(link);
+            if array_blank_at(link, &[0, 0x100_0000, 0x1FF_FFFE]) {   // 头/中(16MB)/尾
+                plog.report(progress_total, progress_total, progress, log);
+                log(&format!("整片擦除完毕（复位+多点空白确认），耗时 {:.3}s",
+                             start.elapsed().as_secs_f64()));
+                return true;
+            }
         }
         std::thread::sleep(Duration::from_millis(500));
         // 进度按预估时长线性推进,封顶在 99%(留 1% 给完成跳变)
@@ -68,6 +92,7 @@ pub fn erase_chip_logged(
         let pct_secs = elapsed.min(progress_total.saturating_sub(1));
         plog.report(pct_secs, progress_total, progress, log);
         if elapsed > timeout_secs {
+            gba_reset_flash(link);   // 超时退出也复位，勿把 status 模式留给后续命令
             plog.report(progress_total, progress_total, progress, log);
             log(&format!("整片擦除超时（{:.1}s）", start.elapsed().as_secs_f64()));
             return false;
@@ -89,7 +114,10 @@ pub fn erase_sector(link: &mut CartridgeLink, byte_base: u32, retries: u32) -> b
         let start = Instant::now();
         loop {
             if link.rom_read(byte_base, &mut probe) && probe == [0xff, 0xff] {
-                return true;
+                gba_reset_flash(link);
+                if link.rom_read(byte_base, &mut probe) && probe == [0xff, 0xff] {
+                    return true;
+                }
             }
             if start.elapsed().as_secs() > 6 {
                 break;

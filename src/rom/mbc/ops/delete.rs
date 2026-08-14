@@ -72,29 +72,25 @@ fn blank_check_banks(link: &mut CartridgeLink, banks: u32) -> bool {
     true
 }
 
-/// 整片擦除 + 心跳：对齐 C# `mission_eraseChip_mbc5`。
-/// - 按 CFI typical 估时；最短等待约 90–180s，避免状态位 0xFF 假完成
-/// - 连续若干次 FF 后再 0xF0 + 多 bank 阵列空白确认
-/// - `timeout_secs` 作硬超时下限（秒）；实际硬超时取 max(timeout, CFI×3, 180s)
+/// 整片擦除 + 心跳：对齐 C# `mission_eraseChip_mbc5` + FlashGBX profile（120s 超时）。
+/// - 完成判据 = **16 字节多点探针连续 FF** + 多 bank 阵列空白确认（多点探针天然免疫
+///   单字节假 FF——2026-08-14 曾因单字节探针被旧数据首字节 FF 骗出 0.2s 假完成）
+/// - 最短等待 15s（物理下限）；硬超时 240s（FlashGBX 120s / 实测 54-181s；
+///   旧版 CFI×3 可达 26min，纯浪费）
 pub fn erase_chip_logged(
     link: &mut CartridgeLink,
     timeout_secs: u64,
     progress: &mut dyn FnMut(u64, u64),
     log: &mut dyn FnMut(&str),
 ) -> bool {
-    let erase_time_ms = super::read::rom_cal_erase_time_ms(link);
-    let min_accept_ms = ((erase_time_ms as f64 * 0.9) as u64)
-        .max(90_000)
-        .min(180_000);
-    let hard_timeout_ms = erase_time_ms
-        .saturating_mul(3)
-        .max(180_000)
-        .max(timeout_secs.saturating_mul(1000));
+    let _ = super::read::rom_cal_erase_time_ms(link); // 保留 CFI 查询副作用（复位+查询时序）
+    const MIN_ACCEPT_MS: u64 = 15_000;
+    let hard_timeout_ms = timeout_secs
+        .saturating_mul(1000)
+        .clamp(180_000, 240_000);
     let hard_timeout = Duration::from_millis(hard_timeout_ms);
 
-    // 进度分母:CFI typical(524s)严重偏大,实测整片擦除稳定约 181s。
-    // 用实测经验值 190s 作为进度基数(留 ~5% 余量),让进度条匀速走到接近 100%。
-    // min_accept_ms / hard_timeout_ms 仍用 CFI 值做超时保护(不影响进度)。
+    // 进度分母:实测整片擦除约 54-181s，取 190s 基数让进度条匀速。
     const ESTIMATED_ERASE_SECS: u64 = 190;
     let progress_total = ESTIMATED_ERASE_SECS;
 
@@ -115,7 +111,7 @@ pub fn erase_chip_logged(
 
     let probe_addr = bus_addr(0, MbcKind::Mbc5); // 0x4000
     let start = Instant::now();
-    let mut probe = [0u8; 1];
+    let mut probe = [0u8; 16];
     let mut ff_streak = 0u32;
     let mut plog = ProgressLog::new(Phase::Erase);
     plog.report(0, progress_total, progress, log);
@@ -129,10 +125,10 @@ pub fn erase_chip_logged(
         switch_bank(link, 0, MbcKind::Mbc5);
         if !link.gbc_read(probe_addr, &mut probe) {
             ff_streak = 0;
-        } else if probe[0] == 0xff {
+        } else if probe.iter().all(|&b| b == 0xff) {
             ff_streak += 1;
-            // 须过最短等待，且连续若干次 FF，再退出状态机验阵列
-            if elapsed_ms >= min_accept_ms && ff_streak >= 5 {
+            // 须过物理下限，且连续若干次多点 FF，再退出状态机验阵列
+            if elapsed_ms >= MIN_ACCEPT_MS && ff_streak >= 5 {
                 std::thread::sleep(Duration::from_millis(500));
                 link.gbc_write(0x00, &[0xf0]);
                 std::thread::sleep(Duration::from_millis(100));
@@ -177,6 +173,7 @@ fn erase_one_phys_sector(
     phys_sector: u64,
     sector_size: u32,
     flash_bank: &mut i32,
+    prof: Option<&crate::profile::Profile>,
 ) -> bool {
     let (bank, sa) = sector_erase_target(kind, phys_sector as u32);
     switch_bank_mbcx(link, bank, kind, flash_bank);
@@ -185,12 +182,27 @@ fn erase_one_phys_sector(
 
     for _try in 0..3 {
         let t0 = Instant::now();
-        link.gbc_write(0xaaa, &[0xaa]);
-        link.gbc_write(0x555, &[0x55]);
-        link.gbc_write(0xaaa, &[0x80]);
-        link.gbc_write(0xaaa, &[0xaa]);
-        link.gbc_write(0x555, &[0x55]);
-        link.gbc_write(sa, &[0x30]); // Sector Erase
+        // 命令双源：规则库 profile 优先（cmds-only，完成判定仍走本函数探针+空白抽查）；
+        // 未命中回落硬编码 AMD 序列（两者等价：AA/555/80/AA/555/30@SA）。
+        let emitted = match prof.and_then(|p| p.sector_erase()) {
+            Some(seq) => {
+                let cmds_only =
+                    crate::profile::SeqFull { cmds: seq.cmds.clone(), waits: Vec::new() };
+                crate::profile::run_dmg(link, &cmds_only, sa)
+            }
+            None => {
+                link.gbc_write(0xaaa, &[0xaa]);
+                link.gbc_write(0x555, &[0x55]);
+                link.gbc_write(0xaaa, &[0x80]);
+                link.gbc_write(0xaaa, &[0xaa]);
+                link.gbc_write(0x555, &[0x55]);
+                link.gbc_write(sa, &[0x30]); // Sector Erase
+                true
+            }
+        };
+        if !emitted {
+            continue;
+        }
 
         let mut probe = [0u8; 1];
         loop {
@@ -265,11 +277,12 @@ pub fn erase_range(
     from: u64,
     to: u64,
     sector_size: u32,
+    prof: Option<&crate::profile::Profile>,
 ) -> bool {
     let sectors = phys_sectors_covering(kind, from, to, sector_size);
     let mut flash_bank: i32 = -1;
     for sec in sectors {
-        if !erase_one_phys_sector(link, kind, sec, sector_size, &mut flash_bank) {
+        if !erase_one_phys_sector(link, kind, sec, sector_size, &mut flash_bank, prof) {
             return false;
         }
     }
@@ -283,6 +296,7 @@ pub fn erase_range_logged(
     from: u64,
     to: u64,
     sector_size: u32,
+    prof: Option<&crate::profile::Profile>,
     progress: &mut dyn FnMut(u64, u64),
     log: &mut dyn FnMut(&str),
 ) -> bool {
@@ -300,7 +314,7 @@ pub fn erase_range_logged(
     // 自高地址向低擦（部分 NOR 习惯）。
     plog.report(0, total, progress, log);
     for sec in sectors.into_iter().rev() {
-        if !erase_one_phys_sector(link, kind, sec, sector_size, &mut flash_bank) {
+        if !erase_one_phys_sector(link, kind, sec, sector_size, &mut flash_bank, prof) {
             log(&format!(
                 "擦除失败 @phys=0x{sec:X} · {:.1}s",
                 plog.elapsed_secs()
@@ -313,31 +327,6 @@ pub fn erase_range_logged(
     true
 }
 
-/// profile 驱动的 sector erase 区间（命中 profile 走命令序列，否则回落 [`erase_range`]）。
-/// MBC Autoselect 自动匹配接好后由 burn 路径调用。
-#[allow(dead_code)]
-pub fn erase_range_profile(
-    link: &mut CartridgeLink,
-    kind: MbcKind,
-    p: &crate::profile::Profile,
-    from: u64,
-    to: u64,
-) -> bool {
-    let Some(seq) = p.sector_erase() else {
-        return erase_range(link, kind, from, to, BANK_SIZE);
-    };
-    let mut off = from & !(BANK_SIZE as u64 - 1);
-    while off < to {
-        let bank = (off >> 14) as u32;
-        switch_bank(link, bank, kind);
-        let sa = bus_addr(off as u32, kind);
-        if !crate::profile::run_dmg(link, &seq, sa) {
-            return false;
-        }
-        off += BANK_SIZE as u64;
-    }
-    true
-}
 
 #[cfg(test)]
 mod tests {

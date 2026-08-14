@@ -523,6 +523,16 @@ fn kind_label(kind: CartridgeKind) -> String {
     })
 }
 
+/// 数字 → MbcKind（main.rs 的 --mbc-kind 解析用）。
+pub fn mbc_kind(n: u8) -> mbc::data::MbcKind {
+    match n {
+        1 => mbc::data::MbcKind::Mbc1,
+        2 => mbc::data::MbcKind::Mbc2,
+        3 => mbc::data::MbcKind::Mbc3,
+        _ => mbc::data::MbcKind::Mbc5,
+    }
+}
+
 /// `cfb burn --rom <f> [--mbc] [--no-erase]` —— 写入 ROM。
 pub fn cmd_burn(
     json: bool,
@@ -533,6 +543,7 @@ pub fn cmd_burn(
     unlock_ppb: bool,
     verify: bool,
     no_erase: bool,
+    mbc_kind: Option<mbc::data::MbcKind>,
 ) -> ExitCode {
     let data = match std::fs::read(rom_path) {
         Ok(d) => d,
@@ -583,9 +594,9 @@ pub fn cmd_burn(
 
     let res = if mbc {
         // MBC：默认路径已是整片+扇区；`chip_erase` 标志与 GBA/CLI 对齐（MBC 侧忽略）
-        mbc::ops::write::burn(&mut link, &data, verify, chip_erase, no_erase, &mut progress, &mut log)
+        mbc::ops::write::burn(&mut link, &data, verify, chip_erase, no_erase, mbc_kind, &mut progress, &mut log)
     } else {
-        // GBA：默认 chip_erase=true（整片擦后连续写）；`--sector` 传入 false
+        // 两线统一：默认 false=只擦 ROM 范围；--chip-erase=true 整片清场
         let opt = BurnOptions { chip_erase, unlock_ppb, verify, no_erase };
         gba::ops::write::burn(&mut link, &data, &opt, &mut progress, &mut log)
     };
@@ -662,7 +673,7 @@ pub fn cmd_rtc_read(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
 }
 
 /// `cfb erase [--mbc]` —— 清空 ROM（按 CFI 扇区逐个擦除，带进度；容量未知时回落整片擦除）。
-pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
+pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool, mbc_kind: Option<mbc::data::MbcKind>) -> ExitCode {
     let Some(mut link) = open_powered(json, "erase", port, mbc) else {
         return ExitCode::from(3);
     };
@@ -677,9 +688,23 @@ pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
     let ok = if mbc {
         // CFI 查容量+扇区大小；卡上实读 MBC 代次决定 bank/地址映射（同 burn 逻辑）。
         // CFI 无容量时与 info 一致：回落头 0x148，再不行默认 8MiB；仍走扇区擦除以便上报进度。
-        let (cfi_size, _buf, sector_size) = mbc::ops::read::rom_get_cfi(&mut link);
-        let live_ct = mbc::ops::read::read_cart_byte(&mut link, 0x147).unwrap_or(0xFF);
-        let kind = mbc::data::MbcKind::from_cartridge_type(live_ct);
+        let (cfi_size, _buf, cfi_sector) = mbc::ops::read::rom_get_cfi(&mut link);
+        let id = mbc::ops::read::rom_get_id(&mut link);
+        // 规则库匹配（同 burn）：profile 显式扇区优先，擦除命令走 profile 序列
+        let prof = {
+            let all = crate::profile::load_all();
+            let id8 = [id[0], id[1], id[2], id[3], 0, 0, 0, 0];
+            crate::profile::match_by_id(&all, &id8).map(|p| p.clone())
+        };
+        if let Some(p) = &prof {
+            log(&format!("Profile: {}", p.name));
+        }
+        let sector_size = prof
+            .as_ref()
+            .and_then(crate::profile::uniform_sector_size)
+            .unwrap_or_else(|| mbc::ops::read::effective_erase_sector(&id, cfi_sector));
+        // 总线默认 MBC5（同 burn）；--mbc-kind 手动兜底
+        let kind = mbc_kind.unwrap_or(mbc::data::MbcKind::Mbc5);
         let device_size = if cfi_size > 0 {
             cfi_size
         } else {
@@ -701,6 +726,7 @@ pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
             0,
             device_size,
             sector_size,
+            prof.as_ref(),
             &mut progress,
             &mut log,
         );
