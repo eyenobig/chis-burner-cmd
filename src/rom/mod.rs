@@ -673,7 +673,13 @@ pub fn cmd_rtc_read(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
 }
 
 /// `cfb erase [--mbc]` —— 清空 ROM（按 CFI 扇区逐个擦除，带进度；容量未知时回落整片擦除）。
-pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool, mbc_kind: Option<mbc::data::MbcKind>) -> ExitCode {
+pub fn cmd_erase(
+    json: bool,
+    port: Option<String>,
+    mbc: bool,
+    mbc_kind: Option<mbc::data::MbcKind>,
+    boot: bool,
+) -> ExitCode {
     let Some(mut link) = open_powered(json, "erase", port, mbc) else {
         return ExitCode::from(3);
     };
@@ -730,19 +736,25 @@ pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool, mbc_kind: Option<m
             &mut progress,
             &mut log,
         );
-        if sector_ok {
+        let ok = if sector_ok {
             true
         } else {
             log("扇区擦除失败，回落整片擦除...");
             progress(0, 1);
-            let chip_ok = mbc::ops::delete::erase_chip_logged(
-                &mut link,
-                90,
-                &mut progress,
-                &mut log,
-            );
-            chip_ok
+            mbc::ops::delete::erase_chip_logged(&mut link, 90, &mut progress, &mut log)
+        };
+        // --boot：MBC5 线性映射下主擦除从 phys 0x4000 起，物理 0x0-0x3FFF 的
+        // 开机窗/隐藏头部区不会被覆盖——旧头部残留会让识别仍报旧游戏。
+        // 显式要求时单独擦掉（该窗走 0x30@0x0000 专用序列），让卡真正干净。
+        if ok && boot {
+            log("擦除开机窗（隐藏头部区）...");
+            if mbc::ops::write::erase_boot_window(&mut link, &mut log) {
+                log("开机窗擦除完成");
+            } else {
+                log("开机窗擦除失败（主区已清空）");
+            }
         }
+        ok
     } else {
         let flash = gba::ops::read::read_info(&mut link);
         let (device_size, sector_size) = if flash.device_size > 0 {

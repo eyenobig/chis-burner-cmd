@@ -243,8 +243,18 @@ impl Profile {
     }
 }
 
-/// 外部 profile 目录：`~/.cfb/profiles/`。
+/// 外部 profile 目录：`CFB_RULE_DIR` 环境变量优先（客户端设置注入，见 beggar_chis
+/// cfb_config.rs 同名语义——指向「含 profiles/ 子目录的根」；也兼容直接放 json 的目录），
+/// 未设置时回落 `~/.cfb/profiles/`。
 pub fn external_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("CFB_RULE_DIR") {
+        let dir = dir.to_string_lossy().trim().to_string();
+        if !dir.is_empty() {
+            let root = PathBuf::from(&dir);
+            let with_profiles = root.join("profiles");
+            return Some(if with_profiles.is_dir() { with_profiles } else { root });
+        }
+    }
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(PathBuf::from(home).join(".cfb").join("profiles"))
 }

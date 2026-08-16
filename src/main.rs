@@ -8,7 +8,7 @@
 //!     info  [--port P] [--mbc]       读 flash + 卡带/游戏信息
 //!     rom-info --file <f>            离线解析 ROM 文件头
 //!     burn  --rom <f> [--mbc] [--no-erase] [...]  写入 ROM
-//!     erase [--mbc]                  清空 ROM（整片擦除）
+//!     erase [--mbc] [--boot]          清空 ROM（整片擦除；--boot 连隐藏头部区一起清）
 //!     dump  --out <f> [--mbc] [--len N]  导出 ROM 到文件
 //!     rtc   [--mbc]                  读取卡带 RTC
 //!     save-dump   --out <f> [--mbc] [--type eeprom4k|eeprom64k|sram|flash|fram] [--len N]
@@ -142,7 +142,7 @@ fn main() -> ExitCode {
             ),
             None => arg_required(json, "burn", "op.no_rom"),
         },
-        "erase" => rom::cmd_erase(json, port, mbc, mbc_kind),
+        "erase" => rom::cmd_erase(json, port, mbc, mbc_kind, has_flag(&args, "--boot")),
         "rtc" => rom::cmd_rtc_read(json, port, mbc),
         "dump" => match opt_value(&args, "--out") {
             Some(f) => {

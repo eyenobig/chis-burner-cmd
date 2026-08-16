@@ -18,6 +18,18 @@
 
 ## [Unreleased]
 
+## [v0.4.2] - 2026-08-17
+
+### 新增
+
+- **`erase --boot`**：GB/GBC 擦除时连物理 0x0-0x3FFF 的隐藏头部区（开机窗）一起清。MBC5 线性映射下常规擦除从 phys 0x4000 起，旧 ROM 的卡头残留在隐藏区会让识别继续报旧游戏；`--boot` 复用烧录路径的开机窗专用擦除序列（`mbc::ops::write::erase_boot_window`），让卡真正回到空白态。仅 MBC 路径有效，GBA 忽略。
+- **`CFB_RULE_DIR` 环境变量**：外部 profile 目录支持环境变量覆盖（优先级：`CFB_RULE_DIR` → `~/.cfb/profiles/`）。兼容「含 `profiles/` 子目录的根」（与 beggar_chis 的 rule 数据目录语义一致）和「直接放 json 的目录」两种形状。客户端据此把设置页的 rule 目录绑定到 cfb。
+
+### 变更
+
+- 版本号 0.4.1 → 0.4.2（行为变更：上述两项需要新版本才生效；旧版对 `--boot` 静默忽略）。
+- `--help` 的 erase 用法行（8 语言）补 `--boot`。
+
 ## [v0.3.5] - 2026-08-07
 
 ### 变更

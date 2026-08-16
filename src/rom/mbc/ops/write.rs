@@ -502,7 +502,8 @@ fn boot_window_blank(link: &mut CartridgeLink) -> bool {
 
 /// 单独擦除开机窗（隐藏区）：unlock + 0x30@0x0000，多点 FF 判完成（20s 超时，软复位重试×1）。
 /// 只在 boot_window_blank()==false 时调用（避免与扇区 0 擦除构成同块二次 0x30）。
-fn erase_boot_window(link: &mut CartridgeLink, log: &mut dyn FnMut(&str)) -> bool {
+/// `cfb erase --boot`（cmd_erase）也复用此函数清头部隐藏区。
+pub(crate) fn erase_boot_window(link: &mut CartridgeLink, log: &mut dyn FnMut(&str)) -> bool {
     for attempt in 0..2u32 {
         if attempt > 0 {
             let _ = link.soft_unplug_3v3();
