@@ -125,23 +125,29 @@ fn main() -> ExitCode {
             Some(f) => rom::cmd_rom_info(json, &f),
             None => arg_required(json, "rom-info", "op.no_rom"),
         },
-        "burn" | "write" => match opt_value(&args, "--rom") {
-            // 两线统一：默认快路径（只擦 ROM 覆盖范围）；`--chip-erase` 显式整片清场。
-            // （GBA 原来的 `--sector` 反向开关已移除，减少参数。）
+        "burn" | "write" => {
+            if has_flag(&args, "--chip-erase") {
+                eprintln!(
+                    "cfb: --chip-erase 已移除。整片清场请先 `cfb erase`，再 `cfb burn`。"
+                );
+                return ExitCode::from(2);
+            }
+            match opt_value(&args, "--rom") {
+            // 默认快路径：只擦 ROM 覆盖范围。整片清场用独立的 `erase` 命令。
             // `--no-erase` 跳过擦除直接写入（仅用于测纯写入吞吐，要求 flash 已是擦除态）。
             Some(f) => rom::cmd_burn(
                 json,
                 port,
                 &f,
                 mbc,
-                has_flag(&args, "--chip-erase"),
                 !has_flag(&args, "--no-ppb"),
                 !has_flag(&args, "--no-verify"),
                 has_flag(&args, "--no-erase"),
                 mbc_kind,
             ),
             None => arg_required(json, "burn", "op.no_rom"),
-        },
+        }
+        }
         "erase" => rom::cmd_erase(json, port, mbc, mbc_kind),
         "rtc" => rom::cmd_rtc_read(json, port, mbc),
         "dump" => match opt_value(&args, "--out") {

@@ -41,8 +41,6 @@ pub struct GbaHeader {
 
 /// 烧录选项。
 pub struct BurnOptions {
-    /// true=整片擦除后连续写（--chip-erase）；默认 false=逐扇区只擦 ROM 范围（快路径）。
-    pub chip_erase: bool,
     /// 开始前自动解锁 PPB。
     pub unlock_ppb: bool,
     /// 烧后校验 + 修复。

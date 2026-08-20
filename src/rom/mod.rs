@@ -533,13 +533,13 @@ pub fn mbc_kind(n: u8) -> mbc::data::MbcKind {
     }
 }
 
-/// `cfb burn --rom <f> [--mbc] [--no-erase]` —— 写入 ROM。
+/// `cfb burn --rom <f> [--mbc] [--no-erase]` —— 写入 ROM（只擦 ROM 覆盖范围）。
+/// 整片清场请用 `cfb erase`，不要往 burn 里塞整片擦。
 pub fn cmd_burn(
     json: bool,
     port: Option<String>,
     rom_path: &str,
     mbc: bool,
-    chip_erase: bool,
     unlock_ppb: bool,
     verify: bool,
     no_erase: bool,
@@ -593,14 +593,13 @@ pub fn cmd_burn(
     let mut log = |m: &str| log_emit(json, m);
 
     let res = if mbc {
-        // MBC：默认路径已是整片+扇区；`chip_erase` 标志与 GBA/CLI 对齐（MBC 侧忽略）
-        mbc::ops::write::burn(&mut link, &data, verify, chip_erase, no_erase, mbc_kind, &mut progress, &mut log)
+        mbc::ops::write::burn(&mut link, &data, verify, no_erase, mbc_kind, &mut progress, &mut log)
     } else {
-        // 两线统一：默认 false=只擦 ROM 范围；--chip-erase=true 整片清场
-        let opt = BurnOptions { chip_erase, unlock_ppb, verify, no_erase };
+        let opt = BurnOptions { unlock_ppb, verify, no_erase };
         gba::ops::write::burn(&mut link, &data, &opt, &mut progress, &mut log)
     };
-    device::power_idle(&mut link);
+    device::power_off(&mut link);
+    std::thread::sleep(std::time::Duration::from_millis(200));
     finish(json, "burn", res.success, res.bytes_written, res.mismatch_bytes, res.seconds)
 }
 
@@ -677,6 +676,13 @@ pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool, mbc_kind: Option<m
     let Some(mut link) = open_powered(json, "erase", port, mbc) else {
         return ExitCode::from(3);
     };
+    // 对齐 burn：GBA 先软件插拔，清上一轮 3.3V 空闲残留。
+    if !mbc {
+        if let Err(e) = link.soft_unplug_gba() {
+            op_err(json, "erase", &format!("GBA 软件插拔失败: {e}"));
+            return ExitCode::from(3);
+        }
+    }
     // 无卡带直接中止，避免空擦。
     if !ensure_cartridge_present(json, "erase", &mut link, mbc) {
         return ExitCode::from(3);
@@ -778,8 +784,14 @@ pub fn cmd_erase(json: bool, port: Option<String>, mbc: bool, mbc_kind: Option<m
             chip_ok
         }
     };
+    if !mbc {
+        // 擦完不复位会把 flash 留在 status/擦除模式，随后 burn 的缓冲编程在 0x2000 附近卡死。
+        gba::ops::delete::gba_reset_flash(&mut link);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
     let secs = t0.elapsed().as_secs_f64();
-    device::power_idle(&mut link);
+    device::power_off(&mut link);
+    std::thread::sleep(std::time::Duration::from_millis(200));
     if json {
         log_emit(
             true,

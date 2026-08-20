@@ -22,12 +22,11 @@ const PACKET: usize = 256;
 /// 调用前 `open_powered` 默认 3.3V；此处 `soft_unplug_3v3` 保持 3.3V 时序做软件插拔。
 /// 命令结束后由调用方 `power_idle` 确认 3.3V。
 ///
-/// `chip_erase`：MBC 默认已走「整片 + 扇区」；该标志保留与 GBA/CLI 对齐（true 时强制整片优先）。
+/// 擦除为默认快路径（空白跳过 / 只擦 ROM 覆盖扇区）。整片清场请用 `cfb erase --mbc`。
 pub fn burn(
     link: &mut CartridgeLink,
     rom: &[u8],
     verify: bool,
-    chip_erase: bool,
     no_erase: bool,
     kind_override: Option<MbcKind>,
     progress: &mut dyn FnMut(u64, u64),
@@ -122,33 +121,26 @@ pub fn burn(
     link.gbc_warm_up();
     switch_bank(link, 0, kind);
 
-    // ---- 步骤 4：擦除（默认=C# 语义：空白跳过 + 仅 ROM 范围扇区擦）----
+    // ---- 步骤 4：擦除（C# 语义：空白跳过 + 仅 ROM 范围扇区擦）----
     // 对齐 C# mission_programRom_mbc5 的 isBlank → mbc5_romEraseSector(addrBegin,addrEnd)
-    // 与 FlashGBX prefer_chip_erase=false。`--chip-erase` 才整片+补擦（慢路径，按需选用）。
+    // 与 FlashGBX prefer_chip_erase=false。整片清场是 `cfb erase --mbc`，不在 burn 里做。
     // `--no-erase` 跳过整个擦除段（仅用于测纯写入吞吐，要求 flash 已是擦除态）。
     if no_erase {
         log("跳过擦除，直接写入（--no-erase，flash 须已为擦除态）");
     } else {
     let banks = ((length + 0x3fff) / 0x4000) as u32;
-    if !chip_erase && rom_range_blank(link, kind, banks) && boot_window_blank(link) {
+    if rom_range_blank(link, kind, banks) && boot_window_blank(link) {
         // 空白卡快路径（含开机窗检查）：无擦除发生 → 免插拔/重识别，直接进写入
         log("ROM 范围已空白，跳过擦除（对齐 C# isBlank）");
     } else {
-    if chip_erase {
-        log("擦除：整片 + ROM 范围扇区补擦 ...");
-        // 整片失败不硬退：仍依赖后续扇区擦
-        if !super::delete::erase_chip_logged(link, 180, progress, log) {
-            log("整片擦失败或未净；将仅依赖后续扇区擦");
-        }
-    } else {
         log("擦除：ROM 范围扇区擦（C#/FlashGBX 默认）...");
-    }
-    if !erase_range_logged(link, kind, 0, length, sector_size, prof.as_ref(), progress, log) {
-        log(&format!("扇区擦失败 | {}", elapsed(&start)));
-        res.first_bad = Some(0);
-        res.seconds = start.elapsed().as_secs_f64();
-        return res;
-    }
+        if !erase_range_logged(link, kind, 0, length, sector_size, prof.as_ref(), progress, log)
+        {
+            log(&format!("扇区擦失败 | {}", elapsed(&start)));
+            res.first_bad = Some(0);
+            res.seconds = start.elapsed().as_secs_f64();
+            return res;
+        }
     link.gbc_write(0x00, &[0xf0]);
     switch_bank(link, 0, kind);
     // 开机窗（隐藏区）条件擦除：只在读到脏时发 0x30@0x0000。

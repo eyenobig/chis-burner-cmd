@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::cartridge_link::CartridgeLink;
 use crate::progress_display::{Phase, ProgressLog};
+use crate::rom::gba::data::SECTOR;
 
 /// 全片擦除并等待完成（轮询读到 0xFFFF）。最简原语；烧录/擦除命令用带进度心跳的
 /// [`erase_chip_logged`]。保留此处作为无 progress 依赖的基线实现。
@@ -49,6 +50,29 @@ fn array_blank_at(link: &mut CartridgeLink, addrs: &[u32]) -> bool {
         }
     }
     true
+}
+
+/// 复位后抽查扇区头/中/尾是否全 0xFF。
+/// 已空白再发 0x30：S29GL 上会拖垮后续缓冲编程（清空后 write 卡在 0%、@0x2000 失败）。
+pub fn sector_is_blank(link: &mut CartridgeLink, byte_base: u32) -> bool {
+    gba_reset_flash(link);
+    let last = byte_base.saturating_add(SECTOR.saturating_sub(2));
+    array_blank_at(link, &[byte_base, byte_base + SECTOR / 2, last])
+}
+
+/// 抽查 [0, length) 每隔 1MB 及首尾是否全 0xFF（先复位）。
+pub fn rom_range_is_blank(link: &mut CartridgeLink, length: u64) -> bool {
+    gba_reset_flash(link);
+    if length < 2 {
+        return array_blank_at(link, &[0]);
+    }
+    let mut addrs = vec![0u32, (length as u32).saturating_sub(2)];
+    let mut p = 0x10_0000u32;
+    while (p as u64) + 2 < length {
+        addrs.push(p);
+        p = p.saturating_add(0x10_0000);
+    }
+    array_blank_at(link, &addrs)
 }
 
 /// 整片擦除 + 心跳：对齐 C# `mission_eraseChip_mbc5` + FlashGBX profile（120s 超时）。
@@ -102,6 +126,9 @@ pub fn erase_chip_logged(
 
 /// 扇区擦除（byte_base 须扇区对齐）。失败仅 DTR/RTS 复位重试（不对关口 reconnect）。
 pub fn erase_sector(link: &mut CartridgeLink, byte_base: u32, retries: u32) -> bool {
+    if sector_is_blank(link, byte_base) {
+        return true;
+    }
     let mut probe = [0u8; 2];
     for _ in 0..retries {
         link.rom_write(0x555, &[0xaa, 0x00]);
@@ -150,6 +177,7 @@ pub fn erase_range_logged(
     plog.report(0, total, progress, log);
     while off < to {
         if !erase_sector(link, off, 5) {
+            gba_reset_flash(link);
             log(&format!(
                 "擦除失败 @0x{off:X} · {:.1}s",
                 plog.elapsed_secs()
@@ -160,6 +188,7 @@ pub fn erase_range_logged(
         plog.report(done, total, progress, log);
         off = off.saturating_add(ss);
     }
+    gba_reset_flash(link);
     true
 }
 
@@ -234,6 +263,8 @@ pub fn unlock_all_ppb_logged(link: &mut CartridgeLink, log: &mut dyn FnMut(&str)
 // ============ profile 驱动的擦除（命中 profile 时走命令序列，否则用上面的硬编码）============
 
 /// profile 命中时用 chip_erase 序列；否则回落 [`erase_chip_logged`] 时带进度心跳。
+/// `cfb erase` 的回落路径用 [`erase_chip_logged`]；本函数保留给 profile 驱动的整片命令。
+#[allow(dead_code)]
 pub fn chip_erase_profile_logged(
     link: &mut CartridgeLink,
     p: &crate::profile::Profile,
@@ -258,6 +289,9 @@ pub fn chip_erase_profile_logged(
 
 /// profile 命中时用 sector_erase 序列擦 `byte_base` 扇区；否则回落 [`erase_sector`]。
 pub fn sector_erase_profile(link: &mut CartridgeLink, p: &crate::profile::Profile, byte_base: u32, retries: u32) -> bool {
+    if sector_is_blank(link, byte_base) {
+        return true;
+    }
     if let Some(seq) = p.sector_erase() {
         for _ in 0..retries {
             if crate::profile::run_gba(link, &seq, byte_base) {

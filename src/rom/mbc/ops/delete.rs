@@ -180,6 +180,11 @@ fn erase_one_phys_sector(
 
     link.gbc_write(0x00, &[0xf0]);
 
+    // 已空白则不再发 0x30：S29GL 克隆片对同一 128KB 块二次擦除会卡死。
+    if sector_blank_check(link, kind, phys_sector, sector_size, flash_bank) {
+        return true;
+    }
+
     for _try in 0..3 {
         let t0 = Instant::now();
         // 命令双源：规则库 profile 优先（cmds-only，完成判定仍走本函数探针+空白抽查）；
