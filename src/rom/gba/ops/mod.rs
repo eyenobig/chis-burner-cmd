@@ -1,8 +1,9 @@
 //! GBA 操作（实现函数），按 **读 / 写 / 删 / 导** 分文件：
-//! `read` · `write` · `delete` · `export` · `rtc` · `save`（均已实现）。
+//! `read` · `write` · `delete` · `export` · `rtc` · `save` · `probe`（均已实现）。
 
 pub mod delete;
 pub mod export;
+pub mod probe;
 pub mod read;
 pub mod rtc;
 pub mod save;

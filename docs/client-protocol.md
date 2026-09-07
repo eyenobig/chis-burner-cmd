@@ -26,8 +26,23 @@
 | `version` | `cfb version` output | `version` |
 | `rtc_data` | Cartridge RTC data | `ok`, `kind`, date/time fields |
 | `save_info` | Located save (save-dump/write/verify/erase) | `save_type`, `offset`, `size` |
+| `save_probe` | Save chip probe (save-probe) | `health`, `jedec`, `chip`, `save_type`, `size_bytes`, `bank_size`, `banks`, `mirrored`, `writable`, `write_probed`, `restored`, `notes` |
 
 The executable schema is the `Event` enum in [`src/event.rs`](../src/event.rs).
+
+## `save-probe`
+
+`cfb save-probe [--mbc] [--no-write]` identifies the save chip instead of guessing. `health` is
+`ok` / `unstable` / `no_response`; `unstable` means repeated reads of one address disagree, which is
+almost always a cartridge that is not fully seated, and the probe then refuses to run write probes.
+
+Probing writes to the cartridge: the JEDEC identify sequence and the bank markers land in the save
+data area on SRAM/FRAM. Every touched byte is backed up, restored, and verified by read-back;
+`restored: false` means the on-cart save may be modified and the command exits non-zero (4).
+`--no-write` issues no write commands at all, so it only reports `health` and leaves
+`save_type` / `size_bytes` unset.
+
+Exit codes: `0` healthy, `3` unstable or no response, `4` probe bytes could not be restored.
 
 ## Typical stream
 

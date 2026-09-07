@@ -59,7 +59,7 @@ RTC:      有
 | **GameCode** | 0xAC..0xAF（4B ASCII） |
 | **Revision** | 0xBC（1B） |
 | **RomChecksum** | stored=header[0xBD]；computed = `-(0x19 + Σ header[0xA0..=0xBC]) & 0xFF`；报告两值与是否一致 |
-| **RTC** | **启发式**：按已知带 RTC 的 GameCode 前缀（AXV/AXP/BPE/U3I/U32/U33/BKA/BR4）判断。`cfb rtc` 已可经 GPIO/S3511 读取；`info` 侧真正探测尚未接入 |
+| **RTC** | **实测**：`info` 经 GPIO 向 S3511 发读命令 0xA6，收 7 个时间寄存器并校验（全同则否、须合法 BCD 且各字段在范围内），详见 [../src/rom/gba/ops/rtc.rs](../src/rom/gba/ops/rtc.rs)。`rom-info` 解析 **ROM 文件** 时无卡可探，仍回退 GameCode 前缀启发式（AXV/AXP/BPE/U3I/U32/U33/BKA/BR4） |
 | **GameName** | 参考源无名称数据库，回退到 RomTitle（`name::game_name`，预留查表位） |
 
 > **GBA vs MBC**：参考源是按文件扩展名 + 用户手选；这里改为从卡内 ROM 头自动判别 GBA，GB/GBC 可用 `--mbc` 或自动路径走 GB 总线（`gbc_read` / 分页）。

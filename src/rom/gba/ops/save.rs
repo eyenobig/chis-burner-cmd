@@ -20,17 +20,17 @@ use crate::rom::gba::data::{SaveResult, SaveType};
 /// 分块大小（字节），与 C# 一致。
 const PACKET: usize = 4096;
 /// SRAM/FLASH/FRAM 一个 bank 64KiB。
-const SRAM_BANK: u32 = 64 * 1024;
+pub(crate) const SRAM_BANK: u32 = 64 * 1024;
 /// FRAM latency（GBA）。
-const FRAM_LATENCY: u8 = 25;
+pub(crate) const FRAM_LATENCY: u8 = 25;
 
 /// 切 SRAM/FRAM bank（写 word 地址 0x800000，复刻 `gba_sramSwitchBank`）。
-fn sram_switch_bank(link: &mut CartridgeLink, bank: u32) {
+pub(crate) fn sram_switch_bank(link: &mut CartridgeLink, bank: u32) {
     link.rom_write(0x800000, &[(bank & 0xffff) as u8, ((bank >> 8) & 0xff) as u8]);
 }
 
 /// 切 FLASH 存档 bank（JEDEC bank-switch 序列，复刻 `gba_flashSwitchBank`）。
-fn flash_switch_bank(link: &mut CartridgeLink, bank: u32) {
+pub(crate) fn flash_switch_bank(link: &mut CartridgeLink, bank: u32) {
     let bank = if bank == 0 { 0 } else { 1 };
     link.ram_write(0x5555, &[0xaa]);
     link.ram_write(0x2aaa, &[0x55]);
@@ -139,6 +139,10 @@ pub fn dump(
         progress(read, len);
     }
     let _ = f.flush();
+    // 收尾把 bank latch 拨回 0：留在 bank1 会让下一条只读低 64KiB 的命令读到高 bank 数据。
+    if len > SRAM_BANK as u64 {
+        switch_bank(link, st, 0);
+    }
     ok(len, t0)
 }
 
@@ -177,6 +181,9 @@ pub fn write(
         write_chunk(link, st, base_addr, &data[written as usize..written as usize + n]);
         written += n as u64;
         progress(written, total);
+    }
+    if total > SRAM_BANK as u64 {
+        switch_bank(link, st, 0);
     }
     ok(total, t0)
 }

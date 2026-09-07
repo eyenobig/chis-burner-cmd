@@ -115,3 +115,91 @@ pub struct SaveResult {
     pub mismatch_bytes: u32,
     pub seconds: f64,
 }
+
+/// 存档总线健康度（同址多读一致性）。
+///
+/// 接触不良的卡在总线上表现为**同一地址两次读出不同值**（悬空线拾噪），
+/// 历史上多次被误判成「坏卡」，实际重插到底即恢复。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ProbeHealth {
+    /// 多次读一致，可信。
+    Ok,
+    /// 多次读不一致 = 总线噪声，通常是没插到底。此时禁止写探针。
+    Unstable,
+    /// 完全无应答（读命令超时）。
+    NoResponse,
+}
+
+impl ProbeHealth {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Unstable => "unstable",
+            Self::NoResponse => "no_response",
+        }
+    }
+}
+
+/// 存档芯片探测结论（`cfb save-probe`）。
+///
+/// 判据全部来自真机实测（见 `docs/save-probe.md`）：JEDEC ID 序列认 FLASH，
+/// 认不出 ID 的按可写性 + bank 独立性推 SRAM/FRAM 容量。
+pub struct SaveProbe {
+    pub health: ProbeHealth,
+    /// JEDEC ID（厂商, 器件）；读不到 ID（SRAM/FRAM）为 None。
+    pub jedec: Option<(u8, u8)>,
+    /// JEDEC ID 命中的芯片型号名。
+    pub chip: Option<&'static str>,
+    /// 判定的存档类型；无法判定为 None。
+    pub save_type: Option<SaveType>,
+    /// 判定容量（字节）；无法判定为 0。
+    pub size_bytes: u64,
+    /// 单个 bank 内的有效容量（GBA 32KiB/64KiB；MBC 8KiB）。
+    pub bank_size: u32,
+    /// 独立 bank 数。
+    pub banks: u32,
+    /// bank 切换无效（高 bank 是低 bank 的镜像）。
+    pub mirrored: bool,
+    /// 写探针读回一致 = 存档芯片可写。
+    pub writable: bool,
+    /// 是否跑过写探针（`--no-write` 或总线不稳时为 false）。
+    pub write_probed: bool,
+    /// 探针写入的字节是否已逐字节还原成功。
+    pub restored: bool,
+    /// 人类可读诊断（逐条）。
+    pub notes: Vec<String>,
+}
+
+impl Default for SaveProbe {
+    fn default() -> Self {
+        Self {
+            health: ProbeHealth::NoResponse,
+            jedec: None,
+            chip: None,
+            save_type: None,
+            size_bytes: 0,
+            bank_size: 0,
+            banks: 0,
+            mirrored: false,
+            writable: false,
+            write_probed: false,
+            restored: true,
+            notes: Vec::new(),
+        }
+    }
+}
+
+impl SaveProbe {
+    /// "C2:09" 形式的 JEDEC ID；无 ID 为空串。
+    pub fn jedec_hex(&self) -> String {
+        match self.jedec {
+            Some((m, d)) => format!("{m:02X}:{d:02X}"),
+            None => String::new(),
+        }
+    }
+
+    /// 探测是否得出了可用于 dump/write 的结论（类型 + 容量）。
+    pub fn conclusive(&self) -> bool {
+        self.save_type.is_some() && self.size_bytes > 0
+    }
+}

@@ -79,15 +79,27 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
                 None
             }
         };
-        device::power_idle(&mut link);
-        let _ = crate::config::save_selected(&port_name);
 
         let kind = match header.as_ref() {
             Some(h) if gba::ops::is_gba_header(h) => CartridgeKind::Gba,
             _ => CartridgeKind::Unknown,
         };
+        // RTC 实测（须在 power_idle 之前，趁总线还活着）。只对确认是 GBA 头的卡做，
+        // 免得对空片/非 GBA 卡白写一轮 GPIO。
+        let rtc_probed = match kind {
+            CartridgeKind::Gba => gba::ops::rtc::detect(&mut link),
+            _ => false,
+        };
+
+        device::power_idle(&mut link);
+        let _ = crate::config::save_selected(&port_name);
+
         let game: Option<GbaHeader> = match (kind, header.as_ref()) {
-            (CartridgeKind::Gba, Some(h)) => Some(gba::ops::parse_header(h)),
+            (CartridgeKind::Gba, Some(h)) => {
+                let mut g = gba::ops::parse_header(h);
+                g.rtc = rtc_probed; // 实测覆盖 game code 启发式
+                Some(g)
+            }
             _ => None,
         };
 
@@ -852,10 +864,23 @@ pub fn cmd_dump(json: bool, port: Option<String>, out_path: &str, mbc: bool, len
 
 /// 解析 `--type`（默认 SRAM）；非法返回 None（由调用方报错）。
 fn parse_save_type(json: bool, cmd: &str, raw: Option<String>) -> Option<gba::data::SaveType> {
-    match raw.as_deref() {
+    match parse_save_type_given(json, cmd, raw)? {
+        Some(st) => Some(st),
         None => Some(gba::data::SaveType::Sram),
+    }
+}
+
+/// 同 `parse_save_type`，但保留「用户没给 `--type`」这一信息（内层 None）供自动探测用。
+/// 外层 None = 用户给了非法值，调用方应退出。
+fn parse_save_type_given(
+    json: bool,
+    cmd: &str,
+    raw: Option<String>,
+) -> Option<Option<gba::data::SaveType>> {
+    match raw.as_deref() {
+        None => Some(None),
         Some(s) => match gba::data::SaveType::from_user(s) {
-            Some(st) => Some(st),
+            Some(st) => Some(Some(st)),
             None => {
                 op_err(json, cmd, &i18n::tf("save.type_invalid", &[("v", s)]));
                 None
@@ -904,9 +929,10 @@ pub fn cmd_save_dump(
     len_opt: Option<u64>,
 ) -> ExitCode {
     let cmd = "save-dump";
-    let Some(st) = parse_save_type(json, cmd, type_raw) else {
+    let Some(type_given) = parse_save_type_given(json, cmd, type_raw) else {
         return ExitCode::from(2);
     };
+    let st = type_given.unwrap_or(gba::data::SaveType::Sram);
     let Some(mut link) = open_powered(json, cmd, port, mbc) else {
         return ExitCode::from(3);
     };
@@ -949,8 +975,9 @@ pub fn cmd_save_dump(
                 r
             }
             gba::data::SaveType::Sram | gba::data::SaveType::Flash | gba::data::SaveType::Fram => {
-                // GBA SRAM/FLASH/FRAM 默认 64KiB（与 C# 默认一致），可用 --len 覆盖。
-                let len = len_opt.unwrap_or(64 * 1024);
+                // `--type` / `--len` 缺一即先探测：此前恒 SRAM+64KiB 会在 128KiB 卡上静默截半。
+                let (st, len, _) =
+                    gba_save_autodetect(&mut link, type_given, len_opt, &mut log);
                 let r = gba::ops::save::dump(&mut link, st, len, out_path, &mut log, &mut progress);
                 emit_save_info(json, st, None, r.bytes);
                 r
@@ -970,9 +997,10 @@ pub fn cmd_save_write(
     type_raw: Option<String>,
 ) -> ExitCode {
     let cmd = "save-write";
-    let Some(st) = parse_save_type(json, cmd, type_raw) else {
+    let Some(type_given) = parse_save_type_given(json, cmd, type_raw) else {
         return ExitCode::from(2);
     };
+    let st = type_given.unwrap_or(gba::data::SaveType::Sram);
     let data = match std::fs::read(file_path) {
         Ok(d) => d,
         Err(e) => {
@@ -1014,6 +1042,13 @@ pub fn cmd_save_write(
                 r
             }
             gba::data::SaveType::Sram | gba::data::SaveType::Flash | gba::data::SaveType::Fram => {
+                // 缺 `--type` 时先认芯片：把 SRAM 时序的写法怼到 FLASH 芯片上是写不进去的。
+                let (st, _, _) = gba_save_autodetect(
+                    &mut link,
+                    type_given,
+                    Some(data.len() as u64),
+                    &mut log,
+                );
                 let r = gba::ops::save::write(&mut link, st, &data, &mut log, &mut progress);
                 emit_save_info(json, st, None, r.bytes);
                 r
@@ -1033,9 +1068,10 @@ pub fn cmd_save_verify(
     type_raw: Option<String>,
 ) -> ExitCode {
     let cmd = "save-verify";
-    let Some(st) = parse_save_type(json, cmd, type_raw) else {
+    let Some(type_given) = parse_save_type_given(json, cmd, type_raw) else {
         return ExitCode::from(2);
     };
+    let st = type_given.unwrap_or(gba::data::SaveType::Sram);
     let data = match std::fs::read(file_path) {
         Ok(d) => d,
         Err(e) => {
@@ -1073,6 +1109,12 @@ pub fn cmd_save_verify(
                 r
             }
             gba::data::SaveType::Sram | gba::data::SaveType::Flash | gba::data::SaveType::Fram => {
+                let (st, _, _) = gba_save_autodetect(
+                    &mut link,
+                    type_given,
+                    Some(data.len() as u64),
+                    &mut log,
+                );
                 let r = gba::ops::save::verify(&mut link, st, &data, &mut log, &mut progress);
                 emit_save_info(json, st, None, r.bytes);
                 r
@@ -1163,6 +1205,136 @@ pub fn cmd_save_erase(
     };
     device::power_idle(&mut link);
     finish(json, cmd, res.success, res.bytes, res.mismatch_bytes, res.seconds)
+}
+
+/// `cfb save-probe [--mbc] [--no-write]` —— 探测存档芯片型号 / 容量 / bank 布局 / 接触健康。
+///
+/// 默认会写卡（JEDEC 命令字节与 bank 标记会落进 SRAM 数据区），所有碰过的字节
+/// 用完立即还原并读回校验；`--no-write` 只做只读健康检查。
+pub fn cmd_save_probe(json: bool, port: Option<String>, mbc: bool, no_write: bool) -> ExitCode {
+    let cmd = "save-probe";
+    let Some(mut link) = open_powered(json, cmd, port, mbc) else {
+        return ExitCode::from(3);
+    };
+    let mut log = |m: &str| log_emit(json, m);
+    let allow_write = !no_write;
+
+    let probe = if mbc {
+        let (kind, declared) = mbc_save_defaults(&mut link);
+        mbc::ops::probe::probe(&mut link, kind, declared, allow_write, &mut log)
+    } else {
+        gba::ops::probe::probe(&mut link, allow_write, &mut log)
+    };
+    device::power_idle(&mut link);
+
+    if json {
+        emit(&Event::SaveProbe {
+            health: probe.health.as_str().to_string(),
+            jedec: probe.jedec.map(|_| probe.jedec_hex()),
+            chip: probe.chip.map(|c| c.to_string()),
+            save_type: probe.save_type.map(|t| t.label().to_string()),
+            size_bytes: probe.size_bytes,
+            bank_size: probe.bank_size,
+            banks: probe.banks,
+            mirrored: probe.mirrored,
+            writable: probe.writable,
+            write_probed: probe.write_probed,
+            restored: probe.restored,
+            notes: probe.notes.clone(),
+        });
+    } else {
+        print_probe_human(&probe);
+    }
+
+    // 还原失败最严重：用户存档可能已被探针改动，必须非零退出让脚本停下来。
+    if !probe.restored {
+        return ExitCode::from(4);
+    }
+    if probe.health != gba::data::ProbeHealth::Ok {
+        return ExitCode::from(3);
+    }
+    ExitCode::SUCCESS
+}
+
+fn print_probe_human(p: &gba::data::SaveProbe) {
+    println!("{}", i18n::t("probe.title"));
+    println!("  {}: {}", i18n::t("probe.f.health"), i18n::t(&format!("probe.health.{}", p.health.as_str())));
+    let dash = "—".to_string();
+    println!("  {}: {}", i18n::t("probe.f.jedec"), if p.jedec.is_some() { p.jedec_hex() } else { dash.clone() });
+    println!("  {}: {}", i18n::t("probe.f.chip"), p.chip.unwrap_or("—"));
+    println!(
+        "  {}: {}",
+        i18n::t("probe.f.type"),
+        p.save_type.map(|t| t.label().to_string()).unwrap_or(dash)
+    );
+    println!(
+        "  {}: {} B ({} × {} B)",
+        i18n::t("probe.f.size"),
+        p.size_bytes,
+        p.banks,
+        p.bank_size
+    );
+    println!("  {}: {}", i18n::t("probe.f.writable"), yes_no(p.writable));
+    println!("  {}: {}", i18n::t("probe.f.mirrored"), yes_no(p.mirrored));
+    println!("  {}: {}", i18n::t("probe.f.restored"), yes_no(p.restored));
+    for n in &p.notes {
+        println!("  · {n}");
+    }
+}
+
+fn yes_no(v: bool) -> String {
+    i18n::t(if v { "probe.yes" } else { "probe.no" })
+}
+
+/// GBA `save-dump` 缺 `--type` / `--len` 时的自动定型定尺寸。
+///
+/// 历史 bug（见测试报告「Bug 修复清单」）：默认恒 SRAM + 64KiB，在 128KiB 卡上
+/// **静默只导一半还报成功**，用户拿去和整份存档比对就是「读出错误数据」。
+/// 现在缺省值一律先探测：
+/// - 类型：JEDEC 认出 ID 走 FLASH，认不出走 SRAM（只碰 2 个字节，用完还原并校验）；
+/// - 尺寸：FLASH 查表得容量；SRAM 用**只读** bank 比对，bank1 与 bank0 内容不同即
+///   判 128KiB。两 bank 内容恰好一致时无法只读区分镜像，此时明确警告而不是闷头截半。
+fn gba_save_autodetect(
+    link: &mut CartridgeLink,
+    type_given: Option<gba::data::SaveType>,
+    len_given: Option<u64>,
+    log: &mut dyn FnMut(&str),
+) -> (gba::data::SaveType, u64, bool) {
+    if let (Some(st), Some(len)) = (type_given, len_given) {
+        return (st, len, true);
+    }
+    let mut probe_log = |_: &str| {};
+    let p = gba::ops::probe::probe(link, true, &mut probe_log);
+    if !p.restored {
+        log(&i18n::t("probe.restore_fail"));
+    }
+    if p.health != gba::data::ProbeHealth::Ok {
+        log(&i18n::t("probe.unstable"));
+    }
+
+    let st = type_given.or(p.save_type).unwrap_or(gba::data::SaveType::Sram);
+    let len = match len_given {
+        Some(l) => l,
+        None => {
+            if p.conclusive() && p.save_type == Some(st) {
+                p.size_bytes
+            } else {
+                // 探测没结论：只读 bank 比对再兜一次，仍不确定就用 64KiB 并明确警告。
+                match gba::ops::probe::readonly_bank_hint(link, st) {
+                    Some(banks) => 64 * 1024 * banks as u64,
+                    None => {
+                        log(&i18n::t("save.size_ambiguous"));
+                        64 * 1024
+                    }
+                }
+            }
+        }
+    };
+    log(&i18n::tf(
+        "save.autodetect",
+        &[("type", st.label()), ("n", &len.to_string())],
+    ));
+    (st, len, p.health == gba::data::ProbeHealth::Ok)
 }
 
 /// 发出 save_info 事件（人类模式静默；offset 现恒为 None，保留参数兼容客户端契约）。

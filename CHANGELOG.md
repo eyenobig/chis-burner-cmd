@@ -18,6 +18,25 @@
 
 ## [Unreleased]
 
+## [v0.4.3] - 2026-09-08
+
+### 新增
+
+- **`cfb save-probe`**：新子命令，探测存档芯片而不是靠默认值猜。把此前只在 Python 协议脚本里的四项手法收敛进 cfb：JEDEC ID 识别（`0xAA@0x5555`/`0x55@0x2AAA`/`0x90@0x5555` → 读 → `0xF0` 退出，命中 GBATEK 已知型号表得容量）、SRAM/FLASH 判别（位能否 0→1）、bank 拓扑（独立 / 镜像 / bank 内 32KiB 折返）、接触健康（同址多读一致性）。真机实测四张卡：GBA SBTP = SRAM 2×64KiB=128KiB；GBA 4BTP = FLASH `C2:09` Macronix MX29L010 2×64KiB=128KiB；GB MBC5 TESTROM 与 MBC3+RTC PM_CRYSTAL = SRAM 4×8KiB=32KiB。
+  - 探测**会写卡**（JEDEC 命令字节会落进 SRAM 数据区），凡碰过的字节一律备份 → 还原 → 逐字节读回校验；还原失败以退出码 4 报错，不静默放过。四张卡探测前后存档均 0 字节差异；MBC3+RTC 卡另确认时钟仍在走且 `day_count` 未变（bank 掩码 `&0x07` 保证探测触不到 `0x08`-`0x0C` 的 RTC 寄存器）。
+  - FLASH 认出 ID 后**直接返回、不下任何直写探针**：未擦除的 FLASH 直写会永久清位且不可还原。
+  - 同址多读不一致（总线噪声 = 卡没插到底）时**拒绝下写命令**并以退出码 3 结束，避免把垃圾写进真存档。`--no-write` 只做只读健康检查。
+- **NDJSON `save_probe` 事件**：见 [docs/client-protocol.md](docs/client-protocol.md)。
+- **`info` 的 GBA RTC 改为实测**：不再按 GameCode 前缀名单猜。`info` 现在经 GPIO 向 S3511 发读命令 0xA6、收 7 个时间寄存器并校验合法性。名单只收录了几个官方卡号，自制卡会被漏判 —— 实测 `4BTP` 卡（S3511 在走）此前被报成 `rtc:false`，现在为 `true`。开销可忽略（`info` 全程 284ms）。判据取「7 字节不得全同 + 合法 BCD + 各字段在范围内」：无 GPIO 的卡上 SIO 是个固定 ROM 位，接收例程反复读同一地址的该位，收到的字节只能是 `0x00` 或 `0xFF` 且必然全同，这就是「无 RTC」的结构性签名。反过来「GPIO 数据口回读是否跟随写入值」不能作判据 —— 实测引脚设为输出时该口恒读 `0x00`。
+  - 正反两例均实测：`4BTP`（带 RTC）读回 `00 01 23 01 06 18 46` → 判有；`SBTP`（无 RTC）读回 `00 00 00 00 00 00 00` → 判无。后者上 GPIO 使能与关闭的读数完全一致，印证了「无 S3511 应答时该位只是固定 ROM 位」。探测不扰动时钟（读命令不写 RTC 寄存器），实测前后秒数单调递增。
+  - `rom-info` 解析 **ROM 文件** 时无卡可探，仍用 GameCode 启发式；两条路径的区别已在 [docs/read-id.md](docs/read-id.md) 写明。
+
+### 修复
+
+- **GBA `save-dump` 读出错误数据**：缺 `--type` / `--len` 时此前恒按 SRAM + 64KiB 处理，在 128KiB 卡上**静默只导一半还报成功**，导出结果拿去和整份存档比对即表现为「读出错误数据」；FLASH 卡被当 SRAM 时 bank 切换序列不对，高 64KiB 会读成低 bank 的镜像。现在缺省值一律先探测定型定尺寸（FLASH 查 JEDEC 表，SRAM 用 bank 独立性），确实判不出容量时显式警告而不是闷头截半。`save-write` / `save-verify` 缺 `--type` 时同样先认芯片。
+- **GBA 存档 bank latch 收尾**：`save::dump` / `save::write` 处理超过 64KiB 后把 bank 拨回 0，避免下一条只读低 64KiB 的命令读到高 bank 数据。
+- **`cfb rtc` 在无 RTC 的 GBA 卡上不再编造读数**：`read_s3511` 的文档一直写着「失败返回 None」，实际却无条件返回 `Some`，于是无 RTC 的卡会打印 `2000-00-00 00:00:00` 并以退出码 0 成功返回。现在读数不合法即返回 None，按退出码 3 报错（`SBTP` 卡实测）。i18n 里那句「无 GPIO 功能？」此前因该分支不可达而是死文案，现在才真正用上。副作用是电池耗尽的 RTC 卡也会判为不可用 —— 这比报个假时间诚实。
+
 ### 移除
 
 - **`burn --chip-erase`**：该开关把整片擦和写入绑进一次进程，超时与克隆片命令都和能用的 `cfb erase` 对不齐。整片清场请先 `cfb erase` 再 `cfb burn`。仍传入该 flag 会以退出码 2 明确报错。已空白扇区跳过二次 `0x30` 的防护保留在 `erase` 路径。

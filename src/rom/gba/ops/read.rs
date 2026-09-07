@@ -101,7 +101,7 @@ pub fn is_gba_header(header: &[u8]) -> bool {
         && header_checksum(header).ok
 }
 
-/// 已知带 RTC 的 GBA game code 前缀（启发式；`info` 尚未改用 GPIO/S3511 探测）。
+/// 已知带 RTC 的 GBA game code 前缀。
 const RTC_PREFIXES: &[&str] = &[
     "AXV", "AXP", "BPE", // Pokémon Ruby / Sapphire / Emerald
     "U3I", "U32", "U33", // Boktai 1 / 2 / 3
@@ -109,6 +109,10 @@ const RTC_PREFIXES: &[&str] = &[
 ];
 
 /// 按 game code 启发式判断是否带 RTC。
+///
+/// 只用于 `rom-info` 解析 **ROM 文件**：文件里没有卡可探测，game code 是唯一线索。
+/// 实卡走 `info`，由 `rtc::detect` 实测 S3511 定论 —— 名单只认几个官方卡号，
+/// 自制卡（如 4BTP）会被漏判，故不可用于实卡。
 pub fn has_rtc(game_code: &str) -> bool {
     let gc = game_code.to_uppercase();
     RTC_PREFIXES.iter().any(|p| gc.starts_with(p))

@@ -23,19 +23,19 @@ use crate::rom::gba::data::SaveResult;
 /// 分块大小（字节）。
 const PACKET: usize = 4096;
 /// 8KiB RAM bank。
-const RAM_BANK: u64 = 0x2000;
+pub(crate) const RAM_BANK: u64 = 0x2000;
 /// RAM 窗口基址。
-const RAM_WINDOW: u32 = 0xA000;
+pub(crate) const RAM_WINDOW: u32 = 0xA000;
 /// MBC FRAM latency。
-const FRAM_LATENCY: u8 = 10;
+pub(crate) const FRAM_LATENCY: u8 = 10;
 
 /// 使能卡带 RAM（写 0x0A 到 0x0000）。
-fn ram_enable(link: &mut CartridgeLink) {
+pub(crate) fn ram_enable(link: &mut CartridgeLink) {
     link.gbc_write(0x0000, &[0x0A]);
 }
 
 /// 选 RAM bank（写 0x4000，按 MBC 代次取掩码）。复刻 `mbc_ramSwitchBank`。
-fn switch_ram_bank(link: &mut CartridgeLink, kind: MbcKind, bank: u32) {
+pub(crate) fn switch_ram_bank(link: &mut CartridgeLink, kind: MbcKind, bank: u32) {
     match kind {
         MbcKind::Mbc1 => {
             link.gbc_write(0x6000, &[0x01]);

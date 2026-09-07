@@ -131,6 +131,35 @@ pub enum Event {
         /// 存档字节数。
         size: u64,
     },
+
+    /// save-probe：存档芯片探测结论。
+    SaveProbe {
+        /// 总线健康："ok" / "unstable"（接触不良）/ "no_response"。
+        health: String,
+        /// JEDEC ID，"C2:09" 形式；SRAM/FRAM 读不到 ID 时为 null。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        jedec: Option<String>,
+        /// JEDEC 命中的芯片型号；未命中为 null。
+        chip: Option<String>,
+        /// 判定的存档类型；无法判定为 null。
+        save_type: Option<String>,
+        /// 判定容量（字节）；无法判定为 0。
+        size_bytes: u64,
+        /// 单 bank 有效容量（字节）。
+        bank_size: u32,
+        /// 独立 bank 数。
+        banks: u32,
+        /// bank 切换无效（高 bank 是低 bank 的镜像）。
+        mirrored: bool,
+        /// 存档芯片可写（写探针读回一致）。
+        writable: bool,
+        /// 是否跑过写探针（`--no-write` 或总线不稳时为 false）。
+        write_probed: bool,
+        /// 探针写入的字节是否已完整还原（false=卡内存档可能被改动，需人工介入）。
+        restored: bool,
+        /// 人类可读诊断逐条。
+        notes: Vec<String>,
+    },
 }
 
 /// 输出一行 NDJSON（立即 flush，保证长耗时扇区擦除期间进度能实时到达客户端）。
