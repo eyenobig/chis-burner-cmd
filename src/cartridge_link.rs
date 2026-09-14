@@ -133,8 +133,14 @@ impl CartridgeLink {
         if let Some(sp) = self.sp.as_mut() {
             let _ = sp.write_request_to_send(true);
             let _ = sp.write_data_terminal_ready(true);
+            // 必须保持再释放: Linux(termios ioctl) 下控制线翻转是即时的, 零间隔
+            // 的脉冲固件看不到, 串口不会进入协议模式 → 全部命令无应答
+            //(WSL/usbip 实测 "No cartridge detected"; Windows 驱动因系统调用
+            // 延迟侥幸可用)。python/SkyEmu 的复位序列均保持 ~60ms。
+            std::thread::sleep(Duration::from_millis(60));
             let _ = sp.write_request_to_send(false);
             let _ = sp.write_data_terminal_ready(false);
+            std::thread::sleep(Duration::from_millis(60));
         }
     }
 

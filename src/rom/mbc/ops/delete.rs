@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use super::read::{bus_addr, flash_phys_addr, switch_bank, switch_bank_mbcx, BANK_SIZE};
 use crate::cartridge_link::CartridgeLink;
+use crate::i18n;
 use crate::progress_display::{Phase, ProgressLog};
 use crate::rom::mbc::data::MbcKind;
 
@@ -94,9 +95,12 @@ pub fn erase_chip_logged(
     const ESTIMATED_ERASE_SECS: u64 = 190;
     let progress_total = ESTIMATED_ERASE_SECS;
 
-    log(&format!(
-        "整片擦除开始（预估 ~{progress_total}s, 硬超时 {:.0}s）...",
-        hard_timeout.as_secs_f64()
+    log(&i18n::tf(
+        "log.chip_erase_start",
+        &[
+            ("est", &progress_total.to_string()),
+            ("timeout", &format!("{:.0}", hard_timeout.as_secs_f64())),
+        ],
     ));
 
     link.gbc_write(0x00, &[0xf0]);
@@ -134,13 +138,13 @@ pub fn erase_chip_logged(
                 std::thread::sleep(Duration::from_millis(100));
                 if blank_check_banks(link, 16) {
                     plog.report(progress_total, progress_total, progress, log);
-                    log(&format!(
-                        "整片擦除完毕（阵列空白确认），耗时 {:.3} s",
-                        start.elapsed().as_secs_f64()
+                    log(&i18n::tf(
+                        "log.chip_erase_done",
+                        &[("s", &format!("{:.3}", start.elapsed().as_secs_f64()))],
                     ));
                     return true;
                 }
-                log("已过最短等待但阵列未空，继续轮询...");
+                log(&i18n::t("log.erase_wait_more"));
                 ff_streak = 0;
             }
         } else {
@@ -151,15 +155,15 @@ pub fn erase_chip_logged(
             link.gbc_write(0x00, &[0xf0]);
             if blank_check_banks(link, 16) {
                 plog.report(progress_total, progress_total, progress, log);
-                log(&format!(
-                    "整片擦除完毕（超时边界），耗时 {:.3} s",
-                    start.elapsed().as_secs_f64()
+                log(&i18n::tf(
+                    "log.chip_erase_done_edge",
+                    &[("s", &format!("{:.3}", start.elapsed().as_secs_f64()))],
                 ));
                 return true;
             }
-            log(&format!(
-                "整片擦除超时（{:.1}s）且阵列未空",
-                start.elapsed().as_secs_f64()
+            log(&i18n::tf(
+                "log.chip_erase_timeout_dirty",
+                &[("s", &format!("{:.1}", start.elapsed().as_secs_f64()))],
             ));
             plog.report(progress_total, progress_total, progress, log);
             return false;
@@ -311,18 +315,24 @@ pub fn erase_range_logged(
     let mut done = 0u64;
     let mut flash_bank: i32 = -1;
     let mut plog = ProgressLog::new(Phase::Erase);
-    log(&format!("扇区 {ss}B x {total} (phys)"));
+    log(&i18n::tf(
+        "log.sector_geom_phys",
+        &[("ss", &ss.to_string()), ("n", &total.to_string())],
+    ));
     if total <= 16 {
         let list: Vec<String> = sectors.iter().map(|s| format!("0x{s:X}")).collect();
-        log(&format!("扇区列表: {}", list.join(", ")));
+        log(&i18n::tf("log.sector_list", &[("list", &list.join(", "))]));
     }
     // 自高地址向低擦（部分 NOR 习惯）。
     plog.report(0, total, progress, log);
     for sec in sectors.into_iter().rev() {
         if !erase_one_phys_sector(link, kind, sec, sector_size, &mut flash_bank, prof) {
-            log(&format!(
-                "擦除失败 @phys=0x{sec:X} · {:.1}s",
-                plog.elapsed_secs()
+            log(&i18n::tf(
+                "log.erase_fail_phys",
+                &[
+                    ("addr", &format!("{sec:X}")),
+                    ("s", &format!("{:.1}", plog.elapsed_secs())),
+                ],
             ));
             return false;
         }

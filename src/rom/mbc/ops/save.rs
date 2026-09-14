@@ -61,7 +61,7 @@ fn save_address(kind: MbcKind, ram_off: u64) -> (u32, u32) {
 
 fn validate_size(kind: MbcKind, len: u64, log: &mut dyn FnMut(&str)) -> bool {
     if kind == MbcKind::Mbc2 && len > 512 {
-        log("MBC2 存档固定为 512 字节（每字节低 4 位有效）");
+        log(&crate::i18n::t("log.mbc2_save_fixed"));
         false
     } else {
         true

@@ -81,8 +81,9 @@ pub enum Event {
     /// - 写入/导出：`done`/`total` 为字节。
     /// - 扇区擦除（`erase_range_logged`）：`done`/`total` 为扇区数（含开局 `0/total`）。
     /// - 整片擦除心跳：`done`/`total` 为已用秒/超时秒。
-    /// 人类可读进度行（Log）统一为 `擦除/写入/校验 {pct}% · {s}s`（见 `progress_display`）。
-    Progress { done: u64, total: u64 },
+    /// `phase` 标识当前阶段："erase" | "write" | "verify" | "dump" | "chip_erase"。
+    /// 客户端按 phase 做进度条标签，按 done/total 算百分比，不需要解析文本。
+    Progress { phase: String, done: u64, total: u64 },
 
     /// burn/erase/dump：阶段性日志。
     Log { message: String },

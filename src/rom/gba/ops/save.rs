@@ -338,7 +338,14 @@ fn eeprom_write_block(
 fn validate_eeprom_size(st: SaveType, len: usize, log: &mut dyn FnMut(&str)) -> Option<(usize, usize)> {
     let (address_bits, expected) = eeprom_params(st)?;
     if len != expected {
-        log(&format!("{} 存档必须正好为 {} 字节，实际为 {} 字节", st.label(), expected, len));
+        log(&crate::i18n::tf(
+            "log.save_size_exact",
+            &[
+                ("type", st.label()),
+                ("expected", &expected.to_string()),
+                ("got", &len.to_string()),
+            ],
+        ));
         None
     } else {
         Some((address_bits, expected))
@@ -366,7 +373,10 @@ pub fn dump_eeprom(
     use std::io::Write;
     for offset in (0..total).step_by(EEPROM_BLOCK) {
         let Some(block) = eeprom_read_block(link, (offset / EEPROM_BLOCK) as u32, address_bits) else {
-            log(&format!("EEPROM 读取失败 @ 0x{offset:04X}"));
+            log(&crate::i18n::tf(
+                "log.eeprom_read_fail",
+                &[("addr", &format!("{offset:04X}"))],
+            ));
             return fail(offset as u64, t0);
         };
         if file.write_all(&block).is_err() {
@@ -393,7 +403,10 @@ pub fn write_eeprom(
     for offset in (0..total).step_by(EEPROM_BLOCK) {
         let block: &[u8; EEPROM_BLOCK] = data[offset..offset + EEPROM_BLOCK].try_into().unwrap();
         if !eeprom_write_block(link, (offset / EEPROM_BLOCK) as u32, address_bits, block) {
-            log(&format!("EEPROM 写入超时 @ 0x{offset:04X}"));
+            log(&crate::i18n::tf(
+                "log.eeprom_write_timeout",
+                &[("addr", &format!("{offset:04X}"))],
+            ));
             return fail(offset as u64, t0);
         }
         progress((offset + EEPROM_BLOCK) as u64, total as u64);
@@ -415,18 +428,23 @@ pub fn verify_eeprom(
     let mut mismatch = 0u32;
     for offset in (0..total).step_by(EEPROM_BLOCK) {
         let Some(block) = eeprom_read_block(link, (offset / EEPROM_BLOCK) as u32, address_bits) else {
-            log(&format!("EEPROM 读取失败 @ 0x{offset:04X}"));
+            log(&crate::i18n::tf(
+                "log.eeprom_read_fail",
+                &[("addr", &format!("{offset:04X}"))],
+            ));
             return fail(offset as u64, t0);
         };
         for i in 0..EEPROM_BLOCK {
             if data[offset + i] != block[i] {
                 mismatch += 1;
                 if mismatch <= 32 {
-                    log(&format!(
-                        "EEPROM 校验不符 @ 0x{:04X}: 期望 {:02X}，读到 {:02X}",
-                        offset + i,
-                        data[offset + i],
-                        block[i]
+                    log(&crate::i18n::tf(
+                        "log.eeprom_verify_mismatch",
+                        &[
+                            ("addr", &format!("{:04X}", offset + i)),
+                            ("exp", &format!("{:02X}", data[offset + i])),
+                            ("got", &format!("{:02X}", block[i])),
+                        ],
                     ));
                 }
             }

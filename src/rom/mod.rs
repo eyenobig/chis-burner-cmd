@@ -457,16 +457,23 @@ fn log_emit(json: bool, m: &str) {
     }
 }
 
+thread_local! {
+    static PROGRESS_PHASE: std::cell::RefCell<String> = std::cell::RefCell::new("idle".to_string());
+}
+
+/// 供 burn/erase 内部切换阶段时调用（配合 progress_emit）。
+pub fn set_progress_phase(phase: &str) {
+    PROGRESS_PHASE.with(|p| *p.borrow_mut() = phase.to_string());
+}
+
 fn progress_emit(json: bool, done: u64, total: u64, last_tick: &mut u64) {
     if json {
-        // 扇区擦除/整片擦除心跳 total 通常很小（扇区数 / 秒数）：每次都发。
-        // 字节写入/校验/导出：按 total 自适应量化粒度，既避免逐包刷爆 UI，又保证
-        // 进度均匀——MBC 的 256B 包和 GBA 的 4KiB 包都能在合理间隔内各发一次。
         let sector_like = total > 0 && total < 4096;
         let tick = if sector_like { done } else { done / tick_step(total) };
         if sector_like || done == 0 || done >= total || tick != *last_tick {
             *last_tick = tick;
-            emit(&Event::Progress { done, total });
+            let phase = PROGRESS_PHASE.with(|p| p.borrow().clone());
+            emit(&Event::Progress { phase, done, total });
         }
     } else {
         let mb = done / (1 << 20);
@@ -595,7 +602,7 @@ pub fn cmd_burn(
     // GBA：对齐 beggar_socket，每次 mission 软件插拔清 MCU 残留后再烧。
     if !mbc {
         if let Err(e) = link.soft_unplug_gba() {
-            op_err(json, "burn", &format!("GBA 软件插拔失败: {e}"));
+            op_err(json, "burn", &i18n::tf("log.gba_unplug_fail", &[("err", &e.to_string())]));
             return ExitCode::from(3);
         }
     }
@@ -638,16 +645,17 @@ pub fn cmd_rtc_read(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
                         overflow: Some(t.overflow),
                     });
                 } else {
-                    println!("RTC (MBC3): 第{}天 {:02}:{:02}:{:02}{}{}",
-                        t.day_count, t.hour, t.minute, t.second,
-                        if t.halted { " [停止]" } else { "" },
-                        if t.overflow { " [溢出]" } else { "" });
+                    let halt_tag = if t.halted { i18n::t("rtc.halted") } else { String::new() };
+                    let overflow_tag = if t.overflow { i18n::t("rtc.overflow") } else { String::new() };
+                    println!("RTC (MBC3): {} {:02}:{:02}:{:02}{}{}",
+                        i18n::tf("rtc.day", &[("n", &t.day_count.to_string())]),
+                        t.hour, t.minute, t.second, halt_tag, overflow_tag);
                 }
                 ExitCode::SUCCESS
             }
             None => {
                 device::power_idle(&mut link);
-                op_err(json, "rtc", "RTC 读取失败");
+                op_err(json, "rtc", &i18n::t("err.rtc_read_fail"));
                 ExitCode::from(3)
             }
         }
@@ -669,14 +677,15 @@ pub fn cmd_rtc_read(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
                         day_count: None, halted: None, overflow: None,
                     });
                 } else {
-                    println!("RTC (GBA/S3511): {:04}-{:02}-{:02} {:02}:{:02}:{:02} 星期{}",
-                        t.year, t.month, t.date, t.hour, t.minute, t.second, t.day_of_week);
+                    println!("RTC (GBA/S3511): {:04}-{:02}-{:02} {:02}:{:02}:{:02}{}",
+                        t.year, t.month, t.date, t.hour, t.minute, t.second,
+                        i18n::tf("rtc.weekday", &[("n", &t.day_of_week.to_string())]));
                 }
                 ExitCode::SUCCESS
             }
             None => {
                 device::power_idle(&mut link);
-                op_err(json, "rtc", "RTC 读取失败（无 GPIO 功能？）");
+                op_err(json, "rtc", &i18n::t("err.rtc_read_fail_gpio"));
                 ExitCode::from(3)
             }
         }
@@ -697,7 +706,7 @@ pub fn cmd_erase(
     // 对齐 burn：GBA 先软件插拔，清上一轮 3.3V 空闲残留。
     if !mbc {
         if let Err(e) = link.soft_unplug_gba() {
-            op_err(json, "erase", &format!("GBA 软件插拔失败: {e}"));
+            op_err(json, "erase", &i18n::tf("log.gba_unplug_fail", &[("err", &e.to_string())]));
             return ExitCode::from(3);
         }
     }
@@ -736,14 +745,24 @@ pub fn cmd_erase(
                 Some(code) if code <= 8 => (32 * 1024u64) << code,
                 _ => 8 * 1024 * 1024,
             };
-            log(&format!(
-                "CFI 无容量，按 {fb} 扇区擦除 (sector={sector_size})"
+            log(&i18n::tf(
+                "log.cfi_no_cap",
+                &[
+                    ("n", &fb.to_string()),
+                    ("ss", &sector_size.to_string()),
+                ],
             ));
             fb
         };
         link.gbc_write(0x00, &[0xf0]); // CFI 后强制复位，避免残留查询模式导致擦除无响应
         link.gbc_warm_up();
-        log(&format!("擦除全片: flash={device_size} sector={sector_size}"));
+        log(&i18n::tf(
+            "log.erase_chip",
+            &[
+                ("size", &device_size.to_string()),
+                ("ss", &sector_size.to_string()),
+            ],
+        ));
         let sector_ok = mbc::ops::delete::erase_range_logged(
             &mut link,
             kind,
@@ -757,7 +776,7 @@ pub fn cmd_erase(
         let ok = if sector_ok {
             true
         } else {
-            log("扇区擦除失败，回落整片擦除...");
+            log(&i18n::t("log.sector_erase_fallback"));
             progress(0, 1);
             mbc::ops::delete::erase_chip_logged(&mut link, 90, &mut progress, &mut log)
         };
@@ -765,11 +784,11 @@ pub fn cmd_erase(
         // 开机窗/隐藏头部区不会被覆盖——旧头部残留会让识别仍报旧游戏。
         // 显式要求时单独擦掉（该窗走 0x30@0x0000 专用序列），让卡真正干净。
         if ok && boot {
-            log("擦除开机窗（隐藏头部区）...");
+            log(&i18n::t("log.erase_boot"));
             if mbc::ops::write::erase_boot_window(&mut link, &mut log) {
-                log("开机窗擦除完成");
+                log(&i18n::t("log.erase_boot_ok"));
             } else {
-                log("开机窗擦除失败（主区已清空）");
+                log(&i18n::t("log.erase_boot_fail"));
             }
         }
         ok
@@ -785,11 +804,18 @@ pub fn cmd_erase(
             } else {
                 64 * 1024
             };
-            log(&format!("CFI 无容量，按 {fb} 扇区擦除 (sector={ss})"));
+            log(&i18n::tf(
+                "log.cfi_no_cap",
+                &[("n", &fb.to_string()), ("ss", &ss.to_string())],
+            ));
             (fb, ss)
         };
-        log(&format!(
-            "擦除全片: flash={device_size} sector={sector_size}"
+        log(&i18n::tf(
+            "log.erase_chip",
+            &[
+                ("size", &device_size.to_string()),
+                ("ss", &sector_size.to_string()),
+            ],
         ));
         let sector_ok = gba::ops::delete::erase_range_logged(
             &mut link,
@@ -802,7 +828,7 @@ pub fn cmd_erase(
         if sector_ok {
             true
         } else {
-            log("扇区擦除失败，回落整片擦除...");
+            log(&i18n::t("log.sector_erase_fallback"));
             let chip_ok =
                 gba::ops::delete::erase_chip_logged(&mut link, 240, &mut progress, &mut log);
             chip_ok
@@ -821,7 +847,7 @@ pub fn cmd_erase(
             true,
             &format!(
                 "{} · {:.1}s",
-                if ok { "擦除完成" } else { "擦除失败" },
+                if ok { i18n::t("log.erase_ok") } else { i18n::t("log.erase_fail") },
                 secs
             ),
         );
@@ -957,7 +983,7 @@ pub fn cmd_save_dump(
             Ok(s) => s,
             Err(()) => {
                 device::power_idle(&mut link);
-                op_err(json, cmd, "MBC 不支持 FLASH 存档类型（用 sram / fram）");
+                op_err(json, cmd, &i18n::t("err.mbc_no_flash_save"));
                 return ExitCode::from(2);
             }
         };
@@ -979,7 +1005,10 @@ pub fn cmd_save_dump(
                 let expected = st.eeprom_size().unwrap();
                 if len_opt.map(|len| len != expected).unwrap_or(false) {
                     device::power_idle(&mut link);
-                    op_err(json, cmd, &format!("{} 存档长度固定为 {} 字节", st.label(), expected));
+                    op_err(json, cmd, &i18n::tf(
+                        "err.save_fixed_len",
+                        &[("type", st.label()), ("n", &expected.to_string())],
+                    ));
                     return ExitCode::from(2);
                 }
                 let r = gba::ops::save::dump_eeprom(&mut link, st, out_path, &mut log, &mut progress);
@@ -1036,7 +1065,7 @@ pub fn cmd_save_write(
             Ok(s) => s,
             Err(()) => {
                 device::power_idle(&mut link);
-                op_err(json, cmd, "MBC 不支持 FLASH 存档类型（用 sram / fram）");
+                op_err(json, cmd, &i18n::t("err.mbc_no_flash_save"));
                 return ExitCode::from(2);
             }
         };
@@ -1103,7 +1132,7 @@ pub fn cmd_save_verify(
             Ok(s) => s,
             Err(()) => {
                 device::power_idle(&mut link);
-                op_err(json, cmd, "MBC 不支持 FLASH 存档类型（用 sram / fram）");
+                op_err(json, cmd, &i18n::t("err.mbc_no_flash_save"));
                 return ExitCode::from(2);
             }
         };
@@ -1165,7 +1194,7 @@ pub fn cmd_save_erase(
             Ok(s) => s,
             Err(()) => {
                 device::power_idle(&mut link);
-                op_err(json, cmd, "MBC 不支持 FLASH 存档类型（用 sram / fram）");
+                op_err(json, cmd, &i18n::t("err.mbc_no_flash_save"));
                 return ExitCode::from(2);
             }
         };
@@ -1196,7 +1225,10 @@ pub fn cmd_save_erase(
                 let expected = st.eeprom_size().unwrap();
                 if len_opt.map(|len| len != expected).unwrap_or(false) {
                     device::power_idle(&mut link);
-                    op_err(json, cmd, &format!("{} 存档长度固定为 {} 字节", st.label(), expected));
+                    op_err(json, cmd, &i18n::tf(
+                        "err.save_fixed_len",
+                        &[("type", st.label()), ("n", &expected.to_string())],
+                    ));
                     return ExitCode::from(2);
                 }
                 log(&i18n::t("save.erase"));

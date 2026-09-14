@@ -2,7 +2,7 @@
 //! 运行时按 `--lang` 或系统语言选用。
 //!
 //! 用法：启动时 `i18n::init(lang)`，之后 `t("key")` 取译文，`tf("key", &[("name","值")])`
-//! 做占位替换（模板里用 `{name}`）。缺失键回退 zh-CN，再缺失则原样返回 key。
+//! 做占位替换（模板里用 `{name}`）。缺失键回退 en，再缺失则原样返回 key。
 //!
 //! 加语言：在 `src/i18n/` 放一个 `<lang>.json`，并在下面 [`LANGS`] 登记一项即可
 //! （包含源串 + 接受的系统 locale 前缀）。
@@ -19,7 +19,7 @@ const DE: &str = include_str!("i18n/de.json");
 const ES: &str = include_str!("i18n/es.json");
 const PT_BR: &str = include_str!("i18n/pt-BR.json");
 
-const FALLBACK: &str = "zh-CN";
+const FALLBACK: &str = "en";
 
 /// 一条语言登记：lang 代码、源 JSON、匹配的系统 locale 前缀（小写，如 "ja"、"pt_br"）。
 struct Lang {
@@ -77,9 +77,9 @@ fn load(lang: &str) -> Option<HashMap<String, String>> {
     })
 }
 
-/// 初始化语言。`lang` 为 None 时跟随系统，找不到则回退中文。只生效一次。
+/// 初始化语言。`lang` 为 None 时跟随系统，找不到则回退英文。只生效一次。
 pub fn init(lang: Option<&str>) {
-    let fb = parse(ZH);
+    let fb = parse(EN);
     let want = lang
         .map(|s| s.to_string())
         .unwrap_or_else(detect_system);
@@ -89,7 +89,7 @@ pub fn init(lang: Option<&str>) {
 
 fn packs() -> &'static Packs {
     PACKS.get_or_init(|| {
-        let fb = parse(ZH);
+        let fb = parse(EN);
         Packs { cur: fb.clone(), fb }
     })
 }
@@ -113,7 +113,7 @@ pub fn tf(key: &str, args: &[(&str, &str)]) -> String {
     s
 }
 
-/// 跟随系统语言：读 LANG/LC_ALL/LANGUAGE，按 [`LANGS`] 前缀匹配；命中不了回退中文。
+/// 跟随系统语言：读 LANG/LC_ALL/LANGUAGE，按 [`LANGS`] 前缀匹配；命中不了回退英文。
 /// Windows 上这些环境变量多为空——上层若需要应另行读系统 UI 语言，此处保持现状。
 fn detect_system() -> String {
     let raw = std::env::var("LANG")

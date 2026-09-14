@@ -12,6 +12,7 @@ use super::read::{
     switch_window,
 };
 use crate::cartridge_link::CartridgeLink;
+use crate::i18n;
 use crate::progress_display::{Phase, ProgressLog};
 use crate::rom::gba::data::BurnResult;
 use crate::rom::mbc::data::{mbc_name, MbcKind};
@@ -46,7 +47,7 @@ pub fn burn(
 
     // 每次 mission：关口再开 + 3.3V 断电/上电（软件等效插拔，避免连续操作残留）
     if let Err(e) = link.soft_unplug_3v3() {
-        log(&format!("软件复位失败: {e}"));
+        log(&i18n::tf("log.soft_reset_fail", &[("err", &e.to_string())]));
         res.first_bad = Some(0);
         res.seconds = start.elapsed().as_secs_f64();
         return res;
@@ -60,12 +61,14 @@ pub fn burn(
     let live_ct = super::read::read_cart_byte(link, 0x147).unwrap_or(0xFF);
     // 总线默认恒 MBC5（ChisFlash 接线；卡头是内容不是硬件）；--mbc-kind 手动兜底
     let kind = kind_override.unwrap_or(MbcKind::Mbc5);
-    log(&format!(
-        "识别: ROM=0x{:02X} {} / cart=0x{:02X} -> 总线 {}（默认MBC5，--mbc-kind 可覆盖）",
-        file_ct,
-        mbc_name(file_ct),
-        live_ct,
-        kind.label()
+    log(&i18n::tf(
+        "log.identify_bus",
+        &[
+            ("rom", &format!("{file_ct:02X}")),
+            ("rom_name", mbc_name(file_ct)),
+            ("cart", &format!("{live_ct:02X}")),
+            ("bus", kind.label()),
+        ],
     ));
 
     // ---- 步骤 2：CFI + Autoselect ID ----
@@ -111,7 +114,13 @@ pub fn burn(
 
     // ---- 步骤 3：空间校验 ----
     if device_size > 0 && length > device_size {
-        log(&format!("空间不足: ROM {} > flash {}", length, device_size));
+        log(&i18n::tf(
+            "log.no_space",
+            &[
+                ("rom", &length.to_string()),
+                ("flash", &device_size.to_string()),
+            ],
+        ));
         res.first_bad = Some(0);
         res.seconds = start.elapsed().as_secs_f64();
         return res;
@@ -126,17 +135,18 @@ pub fn burn(
     // 与 FlashGBX prefer_chip_erase=false。整片清场是 `cfb erase --mbc`，不在 burn 里做。
     // `--no-erase` 跳过整个擦除段（仅用于测纯写入吞吐，要求 flash 已是擦除态）。
     if no_erase {
-        log("跳过擦除，直接写入（--no-erase，flash 须已为擦除态）");
+        log(&i18n::t("log.skip_erase"));
     } else {
     let banks = ((length + 0x3fff) / 0x4000) as u32;
     if rom_range_blank(link, kind, banks) && boot_window_blank(link) {
         // 空白卡快路径（含开机窗检查）：无擦除发生 → 免插拔/重识别，直接进写入
-        log("ROM 范围已空白，跳过擦除（对齐 C# isBlank）");
+        log(&i18n::t("log.rom_blank_skip_mbc"));
     } else {
-        log("擦除：ROM 范围扇区擦（C#/FlashGBX 默认）...");
+        log(&i18n::t("log.erase_rom_range"));
+        crate::rom::set_progress_phase("erase");
         if !erase_range_logged(link, kind, 0, length, sector_size, prof.as_ref(), progress, log)
         {
-            log(&format!("扇区擦失败 | {}", elapsed(&start)));
+            log(&i18n::tf("log.sector_erase_fail_elapsed", &[("s", &elapsed(&start))]));
             res.first_bad = Some(0);
             res.seconds = start.elapsed().as_secs_f64();
             return res;
@@ -147,14 +157,14 @@ pub fn burn(
     // 安全性：若隐藏区属芯片扇区 0，扇区擦后必为空白→跳过（不会同块二次 0x30）；
     // 读到脏 ⇒ 它是独立扇区 ⇒ 单擦合法。每区域最多一次 0x30。
     if !boot_window_blank(link) {
-        log("开机窗（隐藏区）非空白，单独擦除 ...");
+        log(&i18n::t("log.boot_dirty"));
         if !erase_boot_window(link, log) {
-            log("开机窗擦除失败");
+            log(&i18n::t("log.erase_boot_fail"));
             res.first_bad = Some(0);
             res.seconds = start.elapsed().as_secs_f64();
             return res;
         }
-        log("开机窗擦除完成");
+        log(&i18n::t("log.erase_boot_ok"));
     }
     // 擦后空白：警告可继续，不硬拦编程
     let mut probe = [0u8; 16];
@@ -165,30 +175,30 @@ pub fn burn(
             && probe.iter().all(|&x| x == 0xff))
         {
             dirty = true;
-            log(&format!("警告：擦后 bank{b} 非空，仍继续编程"));
+            log(&i18n::tf("log.bank_not_blank", &[("b", &b.to_string())]));
             break;
         }
     }
     switch_bank(link, 0, kind);
     if !dirty {
-        log("擦后空白抽查通过");
+        log(&i18n::t("log.blank_spotcheck_ok"));
     }
 
     // 擦除后再软件插拔：对齐「擦除 mission 结束关口 → 烧录 mission 重开」；
     // 同会话硬扛易出现编程 NAK（物理插拔可好）。
-    log("擦后软件插拔（关电→关串口→3.3V）...");
+    log(&i18n::t("log.unplug_after_erase"));
     if let Err(e) = link.soft_unplug_3v3() {
-        log(&format!("擦后软件复位失败: {e}"));
+        log(&i18n::tf("log.unplug_after_erase_fail", &[("err", &e.to_string())]));
         res.first_bad = Some(0);
         res.seconds = start.elapsed().as_secs_f64();
         return res;
     }
     let (_ds, buf_wr_re, _sec) = rom_get_cfi(link);
     let id2 = rom_get_id(link);
-    log(&format!(
-        "擦后重识别 id={:02X}{:02X}{:02X}{:02X} buf={}",
-        id2[0], id2[1], id2[2], id2[3], buf_wr_re
-    ));
+    log(&i18n::tf("log.reidentify_after_erase", &[
+        ("id", &format!("{:02X}{:02X}{:02X}{:02X}", id2[0], id2[1], id2[2], id2[3])),
+        ("buf", &buf_wr_re.to_string()),
+    ]));
     if buf_wr_re != 0 {
         buf_wr = buf_wr_re;
     }
@@ -207,8 +217,14 @@ pub fn burn(
     let boot_len = length.min(0x4000);
     let main_len = length - boot_len;
     let main_rom = &rom[boot_len as usize..];
-    log(&format!(
-        "开始写入 ... buf_wr={buf_wr}（bank0→开机窗 {boot_len}B + 主区 {main_len}B）"
+    crate::rom::set_progress_phase("write");
+    log(&i18n::tf(
+        "log.write_start",
+        &[
+            ("buf", &buf_wr.to_string()),
+            ("boot", &boot_len.to_string()),
+            ("main", &main_len.to_string()),
+        ],
     ));
     {
         let mut write_plog = ProgressLog::new(Phase::Write);
@@ -240,7 +256,10 @@ pub fn burn(
                 )
             };
             if let Some(bad) = fail {
-                log(&format!("写入失败 @0x{bad:X} | {}", elapsed(&start)));
+                log(&i18n::tf(
+                    "log.write_fail_elapsed",
+                    &[("addr", &format!("{bad:X}")), ("s", &elapsed(&start))],
+                ));
                 res.first_bad = Some(bad);
                 res.seconds = start.elapsed().as_secs_f64();
                 return res;
@@ -251,7 +270,8 @@ pub fn burn(
 
     // ---- 步骤 6：读回校验（两段式，与写入同布局）；残留 FF 可补写第二遍（无需再擦）----
     if verify {
-        log("校验中 ...");
+        crate::rom::set_progress_phase("verify");
+        log(&i18n::t("log.verifying"));
         // 两段校验：boot 段（0x0000 窗读隐藏区）+ 主区段（0x4000 线性窗）；返回总 mismatch
         let verify_all = |link: &mut CartridgeLink,
                           res: &mut BurnResult,
@@ -295,7 +315,7 @@ pub fn burn(
         };
         res.mismatch_bytes = mm;
         if mm > 0 {
-            log(&format!("校验: {mm} 字节不符，补写 ..."));
+            log(&i18n::tf("log.verify_mismatch_rewrite", &[("mm", &mm.to_string())]));
             res.first_bad = None;
             res.mismatch_bytes = 0;
             link.gbc_write(0x00, &[0xf0]);
@@ -338,7 +358,7 @@ pub fn burn(
                 fail
             };
             if let Some(bad) = rewrite_fail {
-                log(&format!("补写失败 @0x{bad:X}"));
+                log(&i18n::tf("log.rewrite_fail", &[("addr", &format!("{bad:X}"))]));
                 res.first_bad = Some(bad);
             } else {
                 let mm2 = {
@@ -350,10 +370,13 @@ pub fn burn(
                     mm2
                 };
                 res.mismatch_bytes = mm2;
-                log(&format!("补写后校验: {mm2} 字节不符 | {}", elapsed(&start)));
+                log(&i18n::tf(
+                    "log.verify_after_rewrite",
+                    &[("mm", &mm2.to_string()), ("s", &elapsed(&start))],
+                ));
             }
         } else {
-            log(&format!("校验: 0 字节不符 | {}", elapsed(&start)));
+            log(&i18n::tf("log.verify_ok", &[("s", &elapsed(&start))]));
         }
     }
 
@@ -534,7 +557,7 @@ pub(crate) fn erase_boot_window(link: &mut CartridgeLink, log: &mut dyn FnMut(&s
             }
         }
     }
-    log("开机窗擦除两轮超时");
+    log(&i18n::t("log.boot_erase_timeout"));
     false
 }
 
@@ -562,11 +585,13 @@ fn verify_boot(
             if buf[i] != data[read as usize + i] {
                 mismatch += 1;
                 if first_msg.is_none() {
-                    first_msg = Some(format!(
-                        "开机窗 0x{:04X} 校验失败: {:02X} → {:02X}",
-                        read as usize + i,
-                        data[read as usize + i],
-                        buf[i]
+                    first_msg = Some(i18n::tf(
+                        "log.boot_verify_fail",
+                        &[
+                            ("addr", &format!("{:04X}", read as usize + i)),
+                            ("exp", &format!("{:02X}", data[read as usize + i])),
+                            ("got", &format!("{:02X}", buf[i])),
+                        ],
                     ));
                 }
             }
@@ -735,11 +760,13 @@ fn verify_flow(
                 mismatch += 1;
                 if res.first_bad.is_none() {
                     res.first_bad = Some(read + i as u64);
-                    first_msg = Some(format!(
-                        "0x{:08X} 校验失败: {:02X} → {:02X}",
-                        read as u64 + i as u64,
-                        rom[read as usize + i],
-                        b[i]
+                    first_msg = Some(i18n::tf(
+                        "log.verify_byte_fail",
+                        &[
+                            ("addr", &format!("{:08X}", read as u64 + i as u64)),
+                            ("exp", &format!("{:02X}", rom[read as usize + i])),
+                            ("got", &format!("{:02X}", b[i])),
+                        ],
                     ));
                 }
             }

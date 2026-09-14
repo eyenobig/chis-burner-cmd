@@ -13,6 +13,7 @@ use super::delete::{
 };
 use super::read::read_info;
 use crate::cartridge_link::CartridgeLink;
+use crate::i18n;
 use crate::profile;
 use crate::progress_display::{Phase, ProgressLog};
 use crate::rom::gba::data::{BurnOptions, BurnResult, SECTOR};
@@ -114,14 +115,21 @@ pub fn burn(
     let mut buf_wr: u16 = 32; // S29GL256 默认；CFI 可覆盖
     let mut info = read_info(link);
     if info.id.as_ref().is_none_or(|id| !id_sane(id)) {
-        log("芯片 ID 异常，软件插拔后重读 ...");
+        log(&i18n::t("log.chip_id_retry"));
         let _ = link.soft_unplug_gba();
         info = read_info(link);
     }
     if info.buffer_write_bytes > 0 {
         buf_wr = info.buffer_write_bytes as u16;
     }
-    log(&format!("ID:{} 容量:{} BuffWr:{}", info.id_hex(), info.device_size, buf_wr));
+    log(&i18n::tf(
+        "log.id_line",
+        &[
+            ("id", &info.id_hex()),
+            ("size", &info.device_size.to_string()),
+            ("buf", &buf_wr.to_string()),
+        ],
+    ));
 
     // 命中 profile 则用其命令序列做擦除（未命中走原硬编码，行为不变）。
     let prof = info.id.and_then(|id| {
@@ -131,27 +139,28 @@ pub fn burn(
     if let Some(p) = &prof {
         log(&format!("Profile: {} ({})", p.name, p.kind_label()));
     } else if info.id.as_ref().is_none_or(|id| !id_sane(id)) {
-        log("未识别到有效 flash ID，中止烧录（请重插卡带）");
+        log(&i18n::t("log.flash_id_invalid"));
         res.first_bad = Some(0);
         res.seconds = start.elapsed().as_secs_f64();
         return res;
     }
 
     if opt.unlock_ppb {
-        log("解锁 PPB (All PPB Erase) ...");
+        log(&i18n::t("log.unlock_ppb"));
         unlock_all_ppb_logged(link, log);
         // PPB 的 0x30 会把 S29GL 留在命令集；不插拔就编程会卡在 0x2000。
-        log("PPB 解锁后软件插拔 ...");
+        log(&i18n::t("log.ppb_unplug"));
         let _ = link.soft_unplug_gba();
     }
 
     if opt.no_erase {
         // --no-erase：跳过擦除，直接连续编程（仅用于测纯写入吞吐，要求 flash 已是擦除态）。
         // `cfb erase` 刚结束时 flash 可能仍在 status 模式，必须先复位再编程。
-        log("跳过擦除，直接写入（--no-erase，flash 须已为擦除态）");
+        log(&i18n::t("log.skip_erase"));
         let _ = link.soft_unplug_gba();
         gba_reset_flash(link);
         std::thread::sleep(std::time::Duration::from_millis(100));
+        crate::rom::set_progress_phase("write");
         let mut write_plog = ProgressLog::new(Phase::Write);
         let mut write_progress = |d: u64, t: u64| {
             progress(d, t);
@@ -162,7 +171,7 @@ pub fn burn(
         if let Some(fail) =
             program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress)
         {
-            log(&format!("写入失败 @0x{fail:08X}（已 DTR 重试×4）"));
+            log(&i18n::tf("log.write_fail_dtr", &[("addr", &format!("{fail:08X}"))]));
             res.first_bad = Some(fail);
         }
     } else {
@@ -175,11 +184,15 @@ pub fn burn(
         let mut skipped_erase = false;
         if rom_range_is_blank(link, erase_end) {
             // 刚跑完 `cfb erase` 时整段已是 0xFF。再发 0x30 会在 S29GL 上拖垮后续缓冲编程。
-            log("ROM 范围已空白，跳过扇区擦除");
+            log(&i18n::t("log.rom_blank_skip"));
             skipped_erase = true;
         } else {
-            log(&format!(
-                "逐扇区擦除 ROM 范围（快路径, 0x{erase_end:X} B, {total_erase_sectors} 扇区）"
+            log(&i18n::tf(
+                "log.sector_erase_range",
+                &[
+                    ("end", &format!("{erase_end:X}")),
+                    ("n", &total_erase_sectors.to_string()),
+                ],
             ));
             let mut erase_plog = ProgressLog::new(Phase::Erase);
             erase_plog.report(0, total_erase_sectors, progress, log);
@@ -193,7 +206,7 @@ pub fn burn(
                     None => erase_sector(link, off as u32, 5),
                 };
                 if !ok {
-                    log(&format!("扇区 0x{off:08X} 擦除失败"));
+                    log(&i18n::tf("log.sector_erase_fail", &[("addr", &format!("{off:08X}"))]));
                     res.first_bad = Some(off);
                     erase_ok = false;
                     break;
@@ -209,12 +222,15 @@ pub fn burn(
             // 擦后稳定化。空白跳过时本进程没发 0x30，必须插拔清 MCU 再写，否则 @0x2000 卡死。
             gba_reset_flash(link);
             if skipped_erase {
-                log("空白跳过后软件插拔，再写入");
+                log(&i18n::t("log.blank_unplug"));
                 let _ = link.soft_unplug_gba();
             } else {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            log(&format!("擦除完毕（{total_erase_sectors} 扇区），开始写入"));
+            log(&i18n::tf(
+                "log.erase_done_write",
+                &[("n", &total_erase_sectors.to_string())],
+            ));
             let mut write_attempt = 0u32;
             loop {
                 write_attempt += 1;
@@ -228,15 +244,19 @@ pub fn burn(
                 match program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress) {
                     None => break,
                     Some(fail) if write_attempt < 3 => {
-                        log(&format!(
-                            "写入失败 @0x{fail:08X}（第{write_attempt}次），软复位后重试整段写入 ..."
+                        log(&i18n::tf(
+                            "log.write_fail_retry",
+                            &[
+                                ("addr", &format!("{fail:08X}")),
+                                ("n", &write_attempt.to_string()),
+                            ],
                         ));
                         let _ = link.soft_unplug_gba();
                         gba_reset_flash(link);
                         std::thread::sleep(std::time::Duration::from_millis(100));
                     }
                     Some(fail) => {
-                        log(&format!("写入失败 @0x{fail:08X}（已重试整段×3）"));
+                        log(&i18n::tf("log.write_fail_gave_up", &[("addr", &format!("{fail:08X}"))]));
                         res.first_bad = Some(fail);
                         break;
                     }
@@ -249,7 +269,14 @@ pub fn burn(
         for round in 1..=8 {
             let (bad, mm) = find_bad_sectors(link, rom, length);
             res.mismatch_bytes = mm;
-            log(&format!("校验(第{round}轮): {mm} 字节不符, {} 扇区", bad.len()));
+            log(&i18n::tf(
+                "log.verify_round",
+                &[
+                    ("round", &round.to_string()),
+                    ("mm", &mm.to_string()),
+                    ("sectors", &bad.len().to_string()),
+                ],
+            ));
             if bad.is_empty() {
                 break;
             }
@@ -280,10 +307,10 @@ pub fn burn(
                         length,
                         &mut write_progress,
                     ) {
-                        log(&format!("修复写入失败 @0x{fail:08X}"));
+                        log(&i18n::tf("log.repair_write_fail", &[("addr", &format!("{fail:08X}"))]));
                     }
                 } else {
-                    log(&format!("修复: 扇区 0x{bsec:08X} 擦除失败"));
+                    log(&i18n::tf("log.repair_erase_fail", &[("addr", &format!("{bsec:08X}"))]));
                 }
             }
         }

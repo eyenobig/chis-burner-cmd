@@ -37,7 +37,7 @@ pub fn percent(done: u64, total: u64) -> u32 {
     pct.min(100)
 }
 
-/// 格式化一行进度：`{label} {pct}% · {s}s`（中文优先，走 i18n）。
+/// 格式化一行进度：`{label} {pct}% · {s}s`（走当前 `--lang` 语言包）。
 pub fn format_progress(label: &str, done: u64, total: u64, elapsed_secs: f64) -> String {
     let pct = percent(done, total);
     format_progress_pct(label, pct, elapsed_secs)

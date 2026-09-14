@@ -5,6 +5,7 @@
 use std::time::{Duration, Instant};
 
 use crate::cartridge_link::CartridgeLink;
+use crate::i18n;
 use crate::progress_display::{Phase, ProgressLog};
 use crate::rom::gba::data::SECTOR;
 
@@ -93,7 +94,13 @@ pub fn erase_chip_logged(
     if !link.rom_erase_chip() {
         return false;
     }
-    log(&format!("整片擦除开始（预估 ~{progress_total}s,超时 {timeout_secs}s）..."));
+    log(&i18n::tf(
+        "log.chip_erase_start",
+        &[
+            ("est", &progress_total.to_string()),
+            ("timeout", &timeout_secs.to_string()),
+        ],
+    ));
     let start = Instant::now();
     let mut probe = [0u8; 2];
     let mut plog = ProgressLog::new(Phase::Erase);
@@ -105,8 +112,10 @@ pub fn erase_chip_logged(
             gba_reset_flash(link);
             if array_blank_at(link, &[0, 0x100_0000, 0x1FF_FFFE]) {   // 头/中(16MB)/尾
                 plog.report(progress_total, progress_total, progress, log);
-                log(&format!("整片擦除完毕（复位+多点空白确认），耗时 {:.3}s",
-                             start.elapsed().as_secs_f64()));
+                log(&i18n::tf(
+                    "log.chip_erase_done",
+                    &[("s", &format!("{:.3}", start.elapsed().as_secs_f64()))],
+                ));
                 return true;
             }
         }
@@ -118,7 +127,10 @@ pub fn erase_chip_logged(
         if elapsed > timeout_secs {
             gba_reset_flash(link);   // 超时退出也复位，勿把 status 模式留给后续命令
             plog.report(progress_total, progress_total, progress, log);
-            log(&format!("整片擦除超时（{:.1}s）", start.elapsed().as_secs_f64()));
+            log(&i18n::tf(
+                "log.chip_erase_timeout",
+                &[("s", &format!("{:.1}", start.elapsed().as_secs_f64()))],
+            ));
             return false;
         }
     }
@@ -172,15 +184,21 @@ pub fn erase_range_logged(
     let mut off = start;
     let mut done = 0u64;
     let mut plog = ProgressLog::new(Phase::Erase);
-    log(&format!("扇区 {ss}B x {total}"));
+    log(&i18n::tf(
+        "log.sector_geom",
+        &[("ss", &ss.to_string()), ("n", &total.to_string())],
+    ));
     // 开局先报 0/total，避免首扇区耗时长时客户端一直停在裸「擦除」无分数。
     plog.report(0, total, progress, log);
     while off < to {
         if !erase_sector(link, off, 5) {
             gba_reset_flash(link);
-            log(&format!(
-                "擦除失败 @0x{off:X} · {:.1}s",
-                plog.elapsed_secs()
+            log(&i18n::tf(
+                "log.erase_fail_at",
+                &[
+                    ("addr", &format!("{off:X}")),
+                    ("s", &format!("{:.1}", plog.elapsed_secs())),
+                ],
             ));
             return false;
         }
@@ -218,7 +236,7 @@ pub fn unlock_all_ppb_logged(link: &mut CartridgeLink, log: &mut dyn FnMut(&str)
     let lock_u16 = u16::from_le_bytes(lock);
     log(&format!("PPB Lock Status: 0x{lock_u16:04X}"));
     if lock[0] != 1 {
-        log("警告: PPB Lock 非 1，All PPB Erase 可能无效（扇区持久保护无法清除）");
+        log(&i18n::t("log.ppb_lock_warn"));
     }
 
     // 读扇区 0 与 0x400000 的 PPB（1=未保护，0=保护）

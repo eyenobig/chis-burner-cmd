@@ -92,7 +92,7 @@ fn main() -> ExitCode {
         Some("mbc3") => Some(rom::mbc_kind(3)),
         Some("mbc5") => Some(rom::mbc_kind(5)),
         Some(other) => {
-            eprintln!("cfb: 未知 --mbc-kind {other}（可选 mbc1|mbc2|mbc3|mbc5）");
+            eprintln!("{}", i18n::tf("err.unknown_mbc_kind", &[("v", other)]));
             return ExitCode::from(2);
         }
     };
@@ -129,7 +129,8 @@ fn main() -> ExitCode {
         "burn" | "write" => {
             if has_flag(&args, "--chip-erase") {
                 eprintln!(
-                    "cfb: --chip-erase 已移除。整片清场请先 `cfb erase`，再 `cfb burn`。"
+                    "{}",
+                    i18n::t("err.chip_erase_removed"),
                 );
                 return ExitCode::from(2);
             }
