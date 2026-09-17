@@ -27,6 +27,7 @@ mod device;
 mod event;
 mod gamedb;
 mod i18n;
+mod lease;
 mod profile;
 mod progress_display;
 mod rom;
@@ -73,6 +74,13 @@ fn print_usage() {
 }
 
 fn main() -> ExitCode {
+    let code = run();
+    // 释放端口租约（漏调时靠持有者心跳断流自愈，见 lease.rs）
+    lease::release_all();
+    code
+}
+
+fn run() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     // 语言：--lang 优先（并记住），否则用记住的，再否则跟随系统。
