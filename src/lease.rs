@@ -25,6 +25,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// 持有者心跳断流超过该秒数视为已死（可抢占）。
 const STALE_SECS: u64 = 20;
+/// 等待期间持有者 ts 冻结超过该秒数（停跳心跳）→ 视为刚死，立即抢占。
+/// 否则「刚被杀死但 ts 仍新鲜」的持有者要等满 STALE_SECS 才判死，超过默认等待。
+const STALE_FROZEN_SECS: u64 = 10;
 /// 等待持有者让渡的轮询间隔。
 const POLL_MS: u64 = 250;
 /// 非本人所写、且超过该秒数无人认领的 `.yield`（请求者已死）→ 接管成功后顺手清理。
@@ -32,7 +35,7 @@ const YIELD_GHOST_SECS: u64 = 30;
 /// 心跳刷新间隔（须远小于 [`STALE_SECS`]）。
 const HEARTBEAT_SECS: u64 = 5;
 /// 默认等待让渡的超时秒数；环境变量 `CFB_LEASE_WAIT` 可覆盖。
-pub const DEFAULT_WAIT_SECS: u64 = 10;
+pub const DEFAULT_WAIT_SECS: u64 = 15;
 
 /// 我们在租约/让渡文件里登记的进程名。
 const OUR_NAME: &str = "cfb";
@@ -130,12 +133,16 @@ fn acquire_in(
     key: &str,
     our_pid: u32,
     wait_secs: u64,
+    frozen_secs: u64,
 ) -> Result<bool, AcquireError> {
     let deadline = Instant::now() + Duration::from_secs(wait_secs.max(1));
     let lpath = lease_path(dir, key);
     let mut holder_seen: Option<HolderInfo> = None;
     let mut yield_owner = false;
     let mut unparsable_streak = 0u32;
+    // ts 冻结跟踪：持有者停跳心跳 frozen_secs 秒 → 刚死，抢占（见 STALE_FROZEN_SECS）
+    let mut frozen_ts: Option<u64> = None;
+    let mut frozen_since = Instant::now();
 
     loop {
         // 1) 原子独占创建租约
@@ -179,7 +186,15 @@ fn acquire_in(
                     return Ok(false);
                 }
                 if now_secs().saturating_sub(ts) > STALE_SECS {
-                    // 持有者心跳断流：视为已死，清残留后重试创建
+                    // 持有者心跳断流（绝对判死）：清残留后重试创建
+                    let _ = fs::remove_file(&lpath);
+                    continue;
+                }
+                if frozen_ts != Some(ts) {
+                    frozen_ts = Some(ts);
+                    frozen_since = Instant::now();
+                } else if frozen_since.elapsed().as_secs() >= frozen_secs {
+                    // ts 在我们眼皮底下冻住（刚死的持有者）：抢占
                     let _ = fs::remove_file(&lpath);
                     continue;
                 }
@@ -236,7 +251,7 @@ pub fn acquire(port: &str) -> Result<(), AcquireError> {
         }
     }
 
-    match acquire_in(&dir, &key, pid, wait_secs) {
+    match acquire_in(&dir, &key, pid, wait_secs, STALE_FROZEN_SECS) {
         Ok(yield_owner) => {
             if yield_owner {
                 eprintln!("{}", crate::i18n::t("lease.resumed"));
@@ -307,7 +322,7 @@ mod tests {
     #[test]
     fn free_port_acquires() {
         let dir = tmp_dir("free");
-        assert!(acquire_in(&dir, "com7", 111, 2).is_ok());
+        assert!(acquire_in(&dir, "com7", 111, 2, 1).is_ok());
         let (h, ts) = read_holder(&dir, "com7").unwrap().unwrap();
         assert_eq!(h.pid, 111);
         assert!(now_secs() - ts <= 2, "新租约 ts 应为当下");
@@ -318,7 +333,7 @@ mod tests {
     fn stale_holder_is_stolen() {
         let dir = tmp_dir("stale");
         foreign_lease(&dir, "com7", 999, now_secs() - STALE_SECS - 5);
-        assert!(acquire_in(&dir, "com7", 111, 2).is_ok());
+        assert!(acquire_in(&dir, "com7", 111, 2, 1).is_ok());
         let (h, _) = read_holder(&dir, "com7").unwrap().unwrap();
         assert_eq!(h.pid, 111, "应清残留租约并接管");
         let _ = fs::remove_dir_all(&dir);
@@ -328,7 +343,8 @@ mod tests {
     fn live_holder_times_out_and_cleans_yield() {
         let dir = tmp_dir("timeout");
         foreign_lease(&dir, "com7", 999999, now_secs());
-        let r = acquire_in(&dir, "com7", 111, 1);
+        // frozen=60s：本测试的“活持有者”只写一次租约不刷新，须禁用冻结抢占以验证超时语义
+        let r = acquire_in(&dir, "com7", 111, 1, 60);
         match r {
             Err(AcquireError::Timeout { holder, .. }) => {
                 let h = holder.expect("应携带持有者信息");
@@ -356,7 +372,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(50));
             }
         });
-        let r = acquire_in(&dir, "com7", 111, 5);
+        let r = acquire_in(&dir, "com7", 111, 5, 1);
         assert!(r.is_ok(), "让渡握手应在超时前完成");
         let (h, _) = read_holder(&dir, "com7").unwrap().unwrap();
         assert_eq!(h.pid, 111, "接管后租约应是我们的");
@@ -368,7 +384,7 @@ mod tests {
     fn own_pid_reacquires() {
         let dir = tmp_dir("own");
         foreign_lease(&dir, "com7", 111, now_secs() - 60); // 即使“过期”，也是自己 → 直接续期
-        assert!(acquire_in(&dir, "com7", 111, 1).is_ok());
+        assert!(acquire_in(&dir, "com7", 111, 1, 1).is_ok());
         let (h, ts) = read_holder(&dir, "com7").unwrap().unwrap();
         assert_eq!(h.pid, 111);
         assert!(now_secs() - ts <= 2, "应刷新心跳 ts");
@@ -379,8 +395,21 @@ mod tests {
     fn ghost_yield_is_cleaned_on_acquire() {
         let dir = tmp_dir("ghost");
         fs::write(yield_path(&dir, "com7"), format!("{{\"pid\":1,\"ts\":{}}}", now_secs() - YIELD_GHOST_SECS - 5)).unwrap();
-        assert!(acquire_in(&dir, "com7", 111, 2).is_ok());
+        assert!(acquire_in(&dir, "com7", 111, 2, 1).is_ok());
         assert!(!yield_path(&dir, "com7").exists(), "陈旧让渡标记应被清理");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn frozen_fresh_holder_is_stolen() {
+        // 场景：持有者刚被杀死，租约 ts 仍新鲜（绝对判死要 20s）。
+        // 我们等待期间其 ts 冻结 1s（测试用阈值；生产 10s）即抢占。
+        let dir = tmp_dir("frozen");
+        foreign_lease(&dir, "com7", 999999, now_secs());
+        let r = acquire_in(&dir, "com7", 111, 5, 1);
+        assert!(r.is_ok(), "冻结的鲜活租约应被抢占: {r:?}");
+        let (h, _) = read_holder(&dir, "com7").unwrap().unwrap();
+        assert_eq!(h.pid, 111);
         let _ = fs::remove_dir_all(&dir);
     }
 
