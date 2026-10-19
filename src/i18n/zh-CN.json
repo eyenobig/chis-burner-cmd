@@ -147,6 +147,7 @@
   "log.erase_fail": "擦除失败",
   "err.rtc_read_fail": "RTC 读取失败",
   "err.rtc_read_fail_gpio": "RTC 读取失败（无 GPIO 功能？）",
+  "err.rtc_absent": "未检测到卡带 RTC（寄存器读数不合理，可能非 MBC3+RTC 物理卡）",
   "err.mbc_no_flash_save": "MBC 不支持 FLASH 存档类型（用 sram / fram）",
   "err.save_fixed_len": "{type} 存档长度固定为 {n} 字节",
   "err.unknown_mbc_kind": "cfb: 未知 --mbc-kind {v}（可选 mbc1|mbc2|mbc3|mbc5）",

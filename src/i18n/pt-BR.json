@@ -147,6 +147,7 @@
   "log.erase_fail": "Falha ao apagar",
   "err.rtc_read_fail": "Falha na leitura do RTC",
   "err.rtc_read_fail_gpio": "Falha na leitura do RTC (sem GPIO?)",
+  "err.rtc_absent": "Nenhum RTC detectado neste cartucho (valores de registro implausíveis)",
   "err.mbc_no_flash_save": "MBC não suporta save FLASH (use sram / fram)",
   "err.save_fixed_len": "Comprimento do save {type} é fixo em {n} bytes",
   "err.unknown_mbc_kind": "cfb: --mbc-kind {v} desconhecido (mbc1|mbc2|mbc3|mbc5)",

@@ -147,6 +147,7 @@
   "log.erase_fail": "지우기 실패",
   "err.rtc_read_fail": "RTC 판독 실패",
   "err.rtc_read_fail_gpio": "RTC 판독 실패(GPIO 없음?)",
+  "err.rtc_absent": "카트리지에서 RTC를 감지하지 못했습니다 (레지스터 값이 비정상)",
   "err.mbc_no_flash_save": "MBC는 FLASH 세이브 미지원(sram / fram 사용)",
   "err.save_fixed_len": "{type} 세이브 길이는 고정 {n}바이트",
   "err.unknown_mbc_kind": "cfb: 알 수 없는 --mbc-kind {v}(mbc1|mbc2|mbc3|mbc5 중 선택)",

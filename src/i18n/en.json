@@ -147,6 +147,7 @@
   "log.erase_fail": "Erase failed",
   "err.rtc_read_fail": "RTC read failed",
   "err.rtc_read_fail_gpio": "RTC read failed (no GPIO?)",
+  "err.rtc_absent": "No RTC detected on this cartridge (implausible register values)",
   "err.mbc_no_flash_save": "MBC does not support FLASH save (use sram / fram)",
   "err.save_fixed_len": "{type} save length is fixed at {n} bytes",
   "err.unknown_mbc_kind": "cfb: unknown --mbc-kind {v} (use mbc1|mbc2|mbc3|mbc5)",

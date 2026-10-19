@@ -147,6 +147,7 @@
   "log.erase_fail": "Löschen fehlgeschlagen",
   "err.rtc_read_fail": "RTC-Lesen fehlgeschlagen",
   "err.rtc_read_fail_gpio": "RTC-Lesen fehlgeschlagen (kein GPIO?)",
+  "err.rtc_absent": "Keine RTC in diesem Modul erkannt (unplausible Registerwerte)",
   "err.mbc_no_flash_save": "MBC unterstützt FLASH-Save nicht (sram / fram verwenden)",
   "err.save_fixed_len": "{type}-Save-Länge ist fest {n} Bytes",
   "err.unknown_mbc_kind": "cfb: unbekanntes --mbc-kind {v} (mbc1|mbc2|mbc3|mbc5)",

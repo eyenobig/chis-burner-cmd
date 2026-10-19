@@ -632,6 +632,17 @@ pub fn cmd_rtc_read(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
         match mbc::ops::rtc::read_mbc3_rtc(&mut link) {
             Some(t) => {
                 device::power_idle(&mut link);
+                // 无 RTC 硬件判定（尽力而为的启发式）：真实 MBC3+RTC 不可能
+                // 返回越界值，也矛盾于"全零时刻 + 天数溢出标志"。非 RTC 物理
+                // 卡（如 MBC5 卡烧了 MBC3 头的合并镜像）这里读到的是 SRAM/
+                // 总线噪声，按无 RTC 报错，保持与 GBA 路径一致的退出码 3。
+                let implausible = t.second > 59 || t.minute > 59 || t.hour > 23
+                    || (t.second == 0 && t.minute == 0 && t.hour == 0
+                        && t.day_count == 0 && t.overflow);
+                if implausible {
+                    op_err(json, "rtc", &i18n::t("err.rtc_absent"));
+                    return ExitCode::from(3);
+                }
                 if json {
                     emit(&Event::RtcData {
                         ok: true,

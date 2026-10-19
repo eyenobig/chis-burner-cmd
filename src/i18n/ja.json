@@ -147,6 +147,7 @@
   "log.erase_fail": "消去失敗",
   "err.rtc_read_fail": "RTC 読み取り失敗",
   "err.rtc_read_fail_gpio": "RTC 読み取り失敗（GPIO なし?）",
+  "err.rtc_absent": "カートリッジにRTCが検出されません（レジスタ値が不正です）",
   "err.mbc_no_flash_save": "MBC は FLASH セーブ非対応（sram / fram を使用）",
   "err.save_fixed_len": "{type} セーブ長は固定 {n} バイト",
   "err.unknown_mbc_kind": "cfb: 不明な --mbc-kind {v}（mbc1|mbc2|mbc3|mbc5 から選択）",

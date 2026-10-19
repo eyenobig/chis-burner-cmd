@@ -147,6 +147,7 @@
   "log.erase_fail": "Borrado fallido",
   "err.rtc_read_fail": "Lectura RTC fallida",
   "err.rtc_read_fail_gpio": "Lectura RTC fallida (¿sin GPIO?)",
+  "err.rtc_absent": "No se detectó RTC en este cartucho (valores de registro improbables)",
   "err.mbc_no_flash_save": "MBC no admite guardado FLASH (usa sram / fram)",
   "err.save_fixed_len": "La longitud de {type} es fija: {n} bytes",
   "err.unknown_mbc_kind": "cfb: --mbc-kind {v} desconocido (usa mbc1|mbc2|mbc3|mbc5)",

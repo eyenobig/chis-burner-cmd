@@ -147,6 +147,7 @@
   "log.erase_fail": "Échec effacement",
   "err.rtc_read_fail": "Échec lecture RTC",
   "err.rtc_read_fail_gpio": "Échec lecture RTC (pas de GPIO ?)",
+  "err.rtc_absent": "Aucune RTC détectée sur cette cartouche (valeurs de registres invraisemblables)",
   "err.mbc_no_flash_save": "MBC ne supporte pas la sauvegarde FLASH (utiliser sram / fram)",
   "err.save_fixed_len": "Longueur de sauvegarde {type} fixée à {n} octets",
   "err.unknown_mbc_kind": "cfb : --mbc-kind {v} inconnu (mbc1|mbc2|mbc3|mbc5)",
