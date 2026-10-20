@@ -30,6 +30,7 @@ mod i18n;
 mod profile;
 mod progress_display;
 mod rom;
+mod udev;
 
 use std::process::ExitCode;
 
@@ -118,6 +119,7 @@ fn main() -> ExitCode {
 
     match cmd {
         "detect" | "devices" => device::cmd_detect(json),
+        "udev" => udev::cmd_udev(json, has_flag(&args, "--print")),
         "select" => device::cmd_select(json, port, clear),
         "disconnect" => device::cmd_disconnect(json, port),
         "voltage" => device::cmd_voltage(json, pos.get(1).map(|s| s.to_string()), clear),

@@ -43,6 +43,7 @@ cargo run -- --lang en detect
 | 命令 | 说明 | 状态 |
 |------|------|------|
 | `detect [--json]` | 列出**已连接的烧录器**（非烧录器串口不显示） | ✅ 已验证 |
+| `udev [--print]` | **一键安装串口权限 udev 规则**（仅 Linux，新用户首次必做；见下方「Linux 串口权限」） | ✅ 已验证（--print/pkexec 全路径） |
 | `select [--port P] [--clear]` | 选择并记住一个烧录器（多台时），存 `~/.cfb.json` | ✅ 已验证 |
 | `disconnect` | 断开/释放当前烧录器串口 | ✅ 已实现 |
 | `voltage [3v3\|5v\|off\|auto]` | 记住/查看供电电压偏好（持久化） | ✅ 已实现 |
@@ -83,6 +84,37 @@ cargo run -- --lang en detect
 设备识别用 [`serialport`](https://crates.io/crates/serialport) crate，它在三大平台统一提供 USB
 VID/PID，无需像 C# 版那样按平台分别走 WMI/ioreg//sys。注意 `detect` 只列出**当前实际接入**的端口
 （不显示已拔出的历史/幽灵设备）。
+
+## Linux 串口权限（新用户第一坑）
+
+Ubuntu/Debian 等发行版上 `/dev/ttyACM*` 默认属 `root:dialout`（0660），普通用户打不开——
+表现为 `detect` 列出烧录器但标记「占用」，或操作直接报 `Permission denied`。
+
+**推荐做法（一条命令，桌面弹一次密码框）：**
+
+```bash
+cfb udev
+```
+
+它把烧录器（`0483:0721`）专属规则写入 `/etc/udev/rules.d/99-chisflash.rules` 并立即生效：
+
+```
+ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="0721", \
+  MODE="0660", GROUP="dialout", TAG+="uaccess"
+```
+
+- `TAG+="uaccess"`：systemd-logind 给**当前桌面登录用户**加 ACL，**免重新登录、免拔插**即生效，
+  且不波及其他串口设备；headless/SSH 场景仍可走传统 `dialout` 组
+- 授权经由 `pkexec`（GNOME/KDE 系统密码框）；无 pkexec 的环境会打印等价手动命令
+  （`cfb udev --print` 也可随时查看）
+- 幂等：规则已存在则直接返回
+
+**两条常见误区**，排障时先对照：
+
+- `sudo usermod -aG dialout $USER` 加组**必须重新登录**才生效——跑完命令立刻测仍会
+  Permission denied，不是命令没起作用
+- Ubuntu 的 **ModemManager** 会把新插入的 ttyACM 当调制解调器探测约 30 秒，期间端口被占用、
+  cfb 显示「占用」。等半分钟，或 `sudo systemctl stop ModemManager`
 
 ## 复刻参考源
 

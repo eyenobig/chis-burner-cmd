@@ -16,6 +16,7 @@
 | --- | --- | --- |
 | `port` | One detected burner | `port`, `vid`, `pid`, `burner`, `open`, `name`, optional `serial` |
 | `summary` | Command summary | `command`, `burners` |
+| `udev` | `cfb udev` serial-permission install progress (Linux) | `phase` (`prompt` / `installed` / `already` / `canceled` / `manual` / `skipped` / `failed`), `message` |
 | `selected` | Persisted port selection | `port` |
 | `info` | Cartridge and flash information | `port`, `present`, `kind`, flash geometry, ROM metadata |
 | `error` | Command or device error | `command`, `message` |

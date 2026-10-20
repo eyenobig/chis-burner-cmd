@@ -39,6 +39,17 @@ pub enum Event {
     /// 命令结束时的汇总（detect 只统计烧录器数量）。
     Summary { command: String, burners: usize },
 
+    /// udev：`cfb udev` 串口权限一键安装的流程事件（仅 Linux 有实际动作）。
+    /// phase 取值："prompt"（等待系统 pkexec 授权） | "installed"（已装好并生效）
+    /// | "already"（规则已存在，幂等跳过） | "canceled"（用户取消授权）
+    /// | "manual"（无 pkexec，message 携带等价手动命令） | "skipped"（非 Linux 平台）
+    /// | "failed"。
+    Udev {
+        phase: String,
+        /// 本地化说明文案；manual 时含完整手动安装命令。
+        message: String,
+    },
+
     /// select 结果：记住的端口；`port` 为 null 表示已清除。
     Selected { port: Option<String> },
 
