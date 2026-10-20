@@ -28,6 +28,8 @@
   - `--json` 新增 `udev` 事件（`phase`: `prompt`/`installed`/`already`/`canceled`/`manual`/`skipped`/`failed`），已登记进 [docs/client-protocol.md](docs/client-protocol.md) 供客户端接入。
   - i18n 八种语言齐发（含 usage 命令表）。
 - **README 新增「Linux 串口权限」章节**：写清两条最常见误区——`usermod -aG dialout` 必须**重新登录**才生效；Ubuntu ModemManager 会把新插入的 ttyACM 当调制解调器探测约 30 秒造成「占用」假象。
+- **lease 自动让位**（自 master 合入，原 v0.5.1 准备内容）：cfb ↔ SkyEmu DirectPlay 交接时烧录器租约自动让位/夺取；冻结心跳检测可夺取刚死亡的租约持有者。
+- **MBC3 RTC 读取可信度检测**：不可信的 RTC 读数（全同字节等结构性签名）判为无 RTC，不再误报。
 
 ## [v0.5.0] - 2026-09-14
 

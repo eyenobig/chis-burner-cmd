@@ -17,6 +17,17 @@ pub const USB_PID: u16 = 0x0721;
 /// 串口波特率（固件固定 9600，USB CDC 下波特率仅占位）。
 pub const BAUD: u32 = 9600;
 
+/// 打开串口句柄（8N1 无流控，2s 句柄级超时；`open()` 里带租约握手地调用）。
+fn open_serial(port: &str) -> Result<Box<dyn SerialPort>, serialport::Error> {
+    serialport::new(port, BAUD)
+        .data_bits(DataBits::Eight)
+        .parity(Parity::None)
+        .stop_bits(StopBits::One)
+        .flow_control(FlowControl::None)
+        .timeout(Duration::from_millis(2000))
+        .open()
+}
+
 /// 串口协议层。`open()` 后按需 `power_on_3v3()` + `warm_up()`，再发协议命令。
 pub struct CartridgeLink {
     port_name: String,
@@ -48,16 +59,49 @@ impl CartridgeLink {
     }
 
     /// 打开串口并复位命令缓冲。
+    /// 被占用（如 SkyEmu 直读会话）时走端口租约自动让渡握手（见 [`crate::lease`]）。
     pub fn open(&mut self) -> std::io::Result<()> {
         self.close();
-        let sp = serialport::new(&self.port_name, BAUD)
-            .data_bits(DataBits::Eight)
-            .parity(Parity::None)
-            .stop_bits(StopBits::One)
-            .flow_control(FlowControl::None)
-            .timeout(Duration::from_millis(2000))
-            .open()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        crate::lease::acquire(&self.port_name).map_err(|e| {
+            let crate::lease::AcquireError::Timeout { holder, waited_secs } = &e;
+            let (name, pid) = holder
+                .as_ref()
+                .map(|h| (h.name.clone(), h.pid.to_string()))
+                .unwrap_or_else(|| ("?".into(), "?".into()));
+            let msg = crate::i18n::tf(
+                "lease.timeout",
+                &[
+                    ("port", &self.port_name),
+                    ("name", &name),
+                    ("pid", &pid),
+                    ("s", &waited_secs.to_string()),
+                ],
+            );
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, msg)
+        })?;
+        let sp = match open_serial(&self.port_name) {
+            Ok(s) => s,
+            Err(first) => {
+                // 拒绝访问：可能持有者开口后还没写租约（毫秒级窗口），或是不参与协议的进程。
+                // 稍候重跑一次握手（幂等），再试一口；仍失败按原错误上报。
+                let desc = first.to_string();
+                if matches!(first.kind(), serialport::ErrorKind::Io(std::io::ErrorKind::PermissionDenied)) {
+                    eprintln!("{}", crate::i18n::t("lease.retry"));
+                    std::thread::sleep(Duration::from_millis(400));
+                    if crate::lease::acquire(&self.port_name).is_ok() {
+                        if let Ok(s) = open_serial(&self.port_name) {
+                            s
+                        } else {
+                            return Err(std::io::Error::new(std::io::ErrorKind::Other, desc));
+                        }
+                    } else {
+                        return Err(std::io::Error::new(std::io::ErrorKind::Other, desc));
+                    }
+                } else {
+                    return Err(std::io::Error::new(std::io::ErrorKind::Other, desc));
+                }
+            }
+        };
         self.sp = Some(sp);
         self.toggle_reset_lines();
         std::thread::sleep(Duration::from_millis(60));
