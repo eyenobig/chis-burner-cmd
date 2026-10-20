@@ -18,6 +18,17 @@
 
 ## [Unreleased]
 
+## [v0.5.1] - 2026-10-20
+
+### 新增
+
+- **`cfb udev`**：一键安装烧录器串口权限（仅 Linux，新用户首次必做）。Ubuntu/Debian 等发行版 `/dev/ttyACM*` 默认 `root:dialout 0660`，普通用户打不开——这是上手第一坑（表现为 `detect` 标记「占用」或直接 `Permission denied`）。本命令把烧录器（`0483:0721`）专属规则经 pkexec（GNOME/KDE 系统密码框）写入 `/etc/udev/rules.d/99-chisflash.rules` 并 `reload + trigger` **立即生效**：
+  - `TAG+="uaccess"`：systemd-logind 给当前桌面登录用户加 ACL，**免重新登录、免拔插**，且不波及其他串口设备；headless/SSH 场景仍可走传统 `dialout` 组（规则同时保留 `GROUP="dialout"` 兜底）。
+  - 幂等：规则已存在直接跳过。`--print` 查看规则与等价手动安装命令（无 pkexec 环境的退路）。非 Linux 平台安静跳过。
+  - `--json` 新增 `udev` 事件（`phase`: `prompt`/`installed`/`already`/`canceled`/`manual`/`skipped`/`failed`），已登记进 [docs/client-protocol.md](docs/client-protocol.md) 供客户端接入。
+  - i18n 八种语言齐发（含 usage 命令表）。
+- **README 新增「Linux 串口权限」章节**：写清两条最常见误区——`usermod -aG dialout` 必须**重新登录**才生效；Ubuntu ModemManager 会把新插入的 ttyACM 当调制解调器探测约 30 秒造成「占用」假象。
+
 ## [v0.5.0] - 2026-09-14
 
 ### 变更
