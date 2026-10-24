@@ -261,6 +261,11 @@ fn cmd_udev_macos(json: bool, print_only: bool) -> ExitCode {
         );
         return ExitCode::SUCCESS;
     }
+    // 无占用者：端口健康则无事可做（设置页随时可点的入口依赖此分支）
+    if burner_openable() {
+        say(json, "none", i18n::t("udev.mac_none").to_string());
+        return ExitCode::SUCCESS;
+    }
 
     // 第二阶段：无占用者仍打不开 → 设备节点权限被改（受管 Mac 等）。
     // 提权修复：osascript 管理员权限（原生密码框，pkexec 等价）chmod 设备节点。
@@ -385,6 +390,11 @@ fn cmd_udev_windows(json: bool, print_only: bool) -> ExitCode {
             "fixed",
             i18n::tf("udev.win_fixed", &[("n", &killed.to_string())]),
         );
+        return ExitCode::SUCCESS;
+    }
+    // 无占用者：端口健康则无事可做；打不开（设备被禁用/状态异常）才进提权阶段
+    if burner_openable() {
+        say(json, "none", i18n::t("udev.win_none").to_string());
         return ExitCode::SUCCESS;
     }
 
