@@ -201,5 +201,11 @@
   "udev.installed": "Rule installed and active immediately ✅  Run `cfb detect` again to connect.",
   "udev.canceled": "Authorization canceled; nothing was changed. Re-run `cfb udev` when needed.",
   "udev.failed": "Install failed (exit code {code}). See `cfb udev --print` for the manual command.",
-  "udev.write_fail": "Failed to write temp file: {err}"
+  "udev.write_fail": "Failed to write temp file: {err}",
+  "udev.mac_checking": "Scanning for processes holding the serial port…",
+  "udev.mac_fixed": "Serial port released (closed {n} holder(s)) ✅  Run `cfb detect` again to connect.",
+  "udev.mac_none": "No process is holding the serial port. If it still won't open, replug the device or check driver approval in System Settings.",
+  "udev.mac_manual_holders": "{n} holder(s) belong to another user and couldn't be closed — quit that app manually, then run `cfb detect` again.",
+  "udev.mac_manual": "macOS needs no udev rules. A port that won't open is usually held by another app — this fix releases such holders.",
+  "udev.mac_lsof_fail": "Failed to scan port holders (lsof)."
 }

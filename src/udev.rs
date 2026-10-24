@@ -61,9 +61,13 @@ fn which(name: &str) -> Option<std::path::PathBuf> {
 }
 
 /// `cfb udev [--print]`：--print 只打印规则与手动安装命令，不做任何改动。
+/// Linux：装 udev 规则；macOS：释放被占用的串口（见 cmd_udev_macos）；Windows：无需，跳过。
 pub fn cmd_udev(json: bool, print_only: bool) -> ExitCode {
+    if cfg!(target_os = "macos") {
+        return cmd_udev_macos(json, print_only);
+    }
     if !cfg!(target_os = "linux") {
-        // Windows/macOS 无需（也无此机制）；安静跳过，客户端按 phase=skipped 处理。
+        // Windows 无需（也无此机制）；安静跳过，客户端按 phase=skipped 处理。
         say(json, "skipped", i18n::t("udev.linux_only").to_string());
         return ExitCode::SUCCESS;
     }
@@ -151,4 +155,86 @@ fn write_rule_tmp(tmp: &std::path::Path) -> std::io::Result<()> {
         std::fs::set_permissions(tmp, std::fs::Permissions::from_mode(0o644))?;
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// macOS：串口被其他进程占用的一键释放
+// ---------------------------------------------------------------------------
+
+/// macOS 上 /dev/cu.usb* 默认全员可读写（无 udev 权限问题），打不开几乎都是
+/// **被其他进程占用**（残留的 SkyEmu、串口监视器等）。这里用 lsof 找出持有者并
+/// 结束同用户进程，等价于 Linux 侧的"一键修复"；不同用户的持有者无法杀，转手动指引。
+#[cfg(target_os = "macos")]
+fn cmd_udev_macos(json: bool, print_only: bool) -> ExitCode {
+    if print_only {
+        say(json, "manual", i18n::t("udev.mac_manual").to_string());
+        return ExitCode::SUCCESS;
+    }
+
+    say(json, "checking", i18n::t("udev.mac_checking").to_string());
+    // /bin/sh 负责展开 glob；不存在的匹配仅报 stderr，不影响其余设备
+    let out = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("lsof -F p /dev/cu.usbmodem* /dev/cu.usbserial* 2>/dev/null")
+        .output();
+    let Ok(out) = out else {
+        say(json, "failed", i18n::t("udev.mac_lsof_fail").to_string());
+        return ExitCode::from(1);
+    };
+
+    // lsof -F p：每个持有进程一行 p<PID>；去重并排除自身
+    let mut pids: Vec<u32> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| l.starts_with('p'))
+        .filter_map(|l| l[1..].trim().parse::<u32>().ok())
+        .filter(|p| *p != std::process::id())
+        .collect();
+    pids.sort_unstable();
+    pids.dedup();
+
+    if pids.is_empty() {
+        say(json, "none", i18n::t("udev.mac_none").to_string());
+        return ExitCode::SUCCESS;
+    }
+
+    let mut killed = 0usize;
+    for pid in &pids {
+        let ok = std::process::Command::new("kill")
+            .arg("-9")
+            .arg(pid.to_string())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            killed += 1;
+        }
+    }
+
+    if killed == pids.len() {
+        say(
+            json,
+            "fixed",
+            i18n::tf("udev.mac_fixed", &[("n", &killed.to_string())]),
+        );
+        ExitCode::SUCCESS
+    } else {
+        // 有持有者属于其他用户（kill 被拒）：给出手动指引
+        say(
+            json,
+            "manual",
+            i18n::tf(
+                "udev.mac_manual_holders",
+                &[("n", &(pids.len() - killed).to_string())],
+            ),
+        );
+        ExitCode::from(1)
+    }
+}
+
+/// 非 macOS 平台的空实现：使 cmd_udev 的调用处在所有平台均可编译。
+#[cfg(not(target_os = "macos"))]
+fn cmd_udev_macos(json: bool, print_only: bool) -> ExitCode {
+    let _ = print_only;
+    say(json, "skipped", i18n::t("udev.linux_only").to_string());
+    ExitCode::SUCCESS
 }

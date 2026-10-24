@@ -201,5 +201,11 @@
   "udev.installed": "规则已安装并立即生效 ✅  重新运行 `cfb detect` 即可连接烧录器",
   "udev.canceled": "授权已取消，未做任何改动。需要时重新运行 `cfb udev`。",
   "udev.failed": "安装失败（退出码 {code}）。可用 `cfb udev --print` 查看手动安装命令。",
-  "udev.write_fail": "写临时文件失败：{err}"
+  "udev.write_fail": "写临时文件失败：{err}",
+  "udev.mac_checking": "正在扫描占用串口的进程…",
+  "udev.mac_fixed": "已释放串口（结束 {n} 个占用进程）✅ 重新运行 cfb detect 即可连接。",
+  "udev.mac_none": "没有进程占用串口。若仍打不开，请重新插拔设备，或在系统设置里确认驱动已授权。",
+  "udev.mac_manual_holders": "有 {n} 个占用进程属于其他用户，无法结束。请手动退出该程序后重新运行 cfb detect。",
+  "udev.mac_manual": "macOS 无需 udev 规则。串口打不开通常是被其他程序占用，本命令会释放占用进程。",
+  "udev.mac_lsof_fail": "扫描串口占用进程失败（lsof）。"
 }
