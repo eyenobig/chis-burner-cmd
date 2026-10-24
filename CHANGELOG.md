@@ -12,8 +12,8 @@
 
 ### 新增
 
-- **macOS 串口占用一键释放**：`cfb udev` 在 macOS 上不再静默跳过——用 `lsof` 定位持有 `/dev/cu.usb*` 串口的进程并结束同用户占用者（残留 SkyEmu、串口监视器等），配合客户端连接弹窗的「一键修复」；无占用或持有者属于其他用户时给出对应指引。
-- **Windows 串口占用一键释放**：`cfb udev` 在 Windows 上同样不再静默跳过——结束占用串口的残留进程（SkyEmu.exe、卡死的其他 cfb.exe 实例，排除自身），客户端随后重新 detect 即可。
+- **macOS 串口授权修复**：`cfb udev` 复刻 Linux 授权流程——先结束占用 `/dev/cu.usb*` 的进程（lsof），仍打不开时经 osascript 管理员权限（原生密码框，pkexec 等价）修复设备节点权限，立即生效；取消/失败/无占用者均有对应事件。
+- **Windows 串口授权修复**：`cfb udev` 先结束占用串口的残留进程（SkyEmu.exe、卡死的 cfb 实例，排除自身）；仍打不开时经 UAC 提权（PowerShell -Verb RunAs）用 PnpDevice 重新启用状态异常的烧录器设备实例；取消/失败有对应事件。
 
 `](#unreleased) 下，按 `新增` / `变更` / `修复` 分组。
 2. 打 tag 发版前：

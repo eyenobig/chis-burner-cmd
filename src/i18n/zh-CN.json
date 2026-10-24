@@ -211,5 +211,13 @@
   "udev.win_checking": "正在扫描占用串口的程序（SkyEmu / 卡死的烧录进程）…",
   "udev.win_fixed": "已释放串口（结束 {n} 个占用进程）✅ 重新运行 cfb detect 即可连接。",
   "udev.win_none": "没有找到占用串口的进程。若仍打不开，请重新插拔设备。",
-  "udev.win_manual_holders": "有 {n} 个占用进程无法结束。请手动关闭它们后重新运行 cfb detect。"
+  "udev.win_manual_holders": "有 {n} 个占用进程无法结束。请手动关闭它们后重新运行 cfb detect。",
+  "udev.mac_stage2": "仍无法打开——正在修复设备访问权限（将弹出系统密码框）…",
+  "udev.mac_installed": "设备访问权限已修复 ✅ 重新运行 cfb detect 即可连接。",
+  "udev.mac_canceled": "授权已取消，未做任何更改。",
+  "udev.mac_failed": "修复未生效。请重新插拔设备后重试，或运行 cfb udev --print 查看手动步骤。",
+  "udev.win_stage2": "仍无法打开——正在修复设备状态（将弹出 UAC 确认框）…",
+  "udev.win_installed": "设备状态已修复 ✅ 重新运行 cfb detect 即可连接。",
+  "udev.win_canceled": "UAC 已取消，未做任何更改。",
+  "udev.win_failed": "修复未生效。请重新插拔设备后重试。"
 }

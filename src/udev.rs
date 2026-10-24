@@ -1,22 +1,28 @@
-//! `cfb udev` —— 一键安装烧录器串口的 udev 权限规则（仅 Linux）。
+//! `cfb udev` —— 烧录器串口一键修复（三平台）。
 //!
-//! 新用户在 Ubuntu/Debian 等发行版上默认打不开 /dev/ttyACM*（root:dialout 0660），
-//! 而 `usermod -aG dialout` 要**重新登录**才生效——这是上手第一坑。本命令把
-//! ChisFlash 烧录器（0483:0721）专属规则写入 /etc/udev/rules.d/：
+//! 名字沿用 Linux 的 udev 规则方案；三个平台各自复刻同一套授权流程：
 //!
-//! - `TAG+="uaccess"`：桌面登录用户经 systemd-logind 的 ACL **立即**获得访问权，
-//!   免重登、免拔插（安装后 `udevadm trigger` 对已插设备生效），且只授权当前会话用户；
-//! - `GROUP="dialout"`：headless / SSH 等无 seat 场景仍可走传统的 dialout 组；
-//! - 只匹配烧录器 VID/PID，不影响其他串口设备。
+//! **Linux**：新用户默认打不开 /dev/ttyACM*（root:dialout 0660），`usermod -aG dialout`
+//! 要重新登录——上手第一坑。本命令把烧录器（0483:0721）专属规则写入 /etc/udev/rules.d/：
+//! `TAG+="uaccess"` 经 systemd-logind 的 ACL **立即**授权桌面用户（免重登免拔插）；
+//! `GROUP="dialout"` 兼容 headless 场景。授权经由 pkexec 弹系统密码框；幂等：已装直接返回。
 //!
-//! 授权经由 pkexec（GNOME/KDE 弹系统密码框），用户无需手敲 sudo；
-//! 无 pkexec 的环境打印等价的手动安装命令。幂等：规则已存在则直接返回。
+//! **macOS**：/dev/cu.usb* 默认全员可读写，打不开多因被占用或设备节点权限被改。
+//! 流程复刻：先结束占用进程（lsof，无需提权）→ 仍打不开则经 osascript 的管理员
+//! 权限（原生密码框，pkexec 等价）chmod 修复设备节点，立即生效。
+//!
+//! **Windows**：COM 口无用户态权限问题，打不开多因被占用或设备被禁用/状态异常。
+//! 流程复刻：先结束占用进程（taskkill，无需提权）→ 仍打不开则经 UAC 提权
+//! （PowerShell -Verb RunAs，原生确认框）用 PnpDevice 重新启用异常的烧录器设备实例。
+//!
+//! 事件 phase 约定（三平台一致，前端按此驱动 UI）：
+//! checking → prompt → installed / fixed / canceled / manual / failed / none / skipped
 
 use crate::event::{emit, Event};
 use crate::i18n;
 use std::process::ExitCode;
 
-/// 规则安装路径。
+/// 规则安装路径（仅 Linux）。
 const RULE_PATH: &str = "/etc/udev/rules.d/99-chisflash.rules";
 /// 规则内容。首行的 chisflash-burner 标记用于幂等判断（识别"本工具装的规则"）。
 const RULE: &str = concat!(
@@ -60,17 +66,17 @@ fn which(name: &str) -> Option<std::path::PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// `cfb udev [--print]`：--print 只打印规则与手动安装命令，不做任何改动。
-/// Linux：装 udev 规则；macOS：释放被占用的串口（见 cmd_udev_macos）；Windows：无需，跳过。
+/// `cfb udev [--print]`：三平台一键修复烧录器串口。
+/// Linux：装 udev 规则；macOS：释放占用 + 修复设备节点权限；Windows：释放占用 + 修复设备状态。
 pub fn cmd_udev(json: bool, print_only: bool) -> ExitCode {
     if cfg!(target_os = "macos") {
         return cmd_udev_macos(json, print_only);
     }
     if cfg!(target_os = "windows") {
-        return cmd_udev_windows(json);
+        return cmd_udev_windows(json, print_only);
     }
     if !cfg!(target_os = "linux") {
-        // 其余 unix 无此机制；安静跳过，客户端按 phase=skipped 处理。
+        // 其余平台无此机制；安静跳过，客户端按 phase=skipped 处理。
         say(json, "skipped", i18n::t("udev.linux_only").to_string());
         return ExitCode::SUCCESS;
     }
@@ -161,31 +167,58 @@ fn write_rule_tmp(tmp: &std::path::Path) -> std::io::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// macOS：串口被其他进程占用的一键释放
+// 共享（macOS / Windows）：烧录器串口枚举与可打开探测
 // ---------------------------------------------------------------------------
 
-/// macOS 上 /dev/cu.usb* 默认全员可读写（无 udev 权限问题），打不开几乎都是
-/// **被其他进程占用**（残留的 SkyEmu、串口监视器等）。这里用 lsof 找出持有者并
-/// 结束同用户进程，等价于 Linux 侧的"一键修复"；不同用户的持有者无法杀，转手动指引。
-#[cfg(target_os = "macos")]
-fn cmd_udev_macos(json: bool, print_only: bool) -> ExitCode {
-    if print_only {
-        say(json, "manual", i18n::t("udev.mac_manual").to_string());
-        return ExitCode::SUCCESS;
-    }
+/// 烧录器（0483:0721）当前枚举到的串口名（/dev/cu.usb* 或 COMx）。
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn burner_port_names() -> Vec<String> {
+    use serialport::SerialPortType;
+    let Ok(ports) = serialport::available_ports() else {
+        return Vec::new();
+    };
+    ports
+        .into_iter()
+        .filter_map(|p| match p.port_type {
+            SerialPortType::UsbPort(info) => {
+                (info.vid == 0x0483 && info.pid == 0x0721).then_some(p.port_name)
+            }
+            _ => None,
+        })
+        .collect()
+}
 
-    say(json, "checking", i18n::t("udev.mac_checking").to_string());
-    // /bin/sh 负责展开 glob；不存在的匹配仅报 stderr，不影响其余设备
-    let out = std::process::Command::new("/bin/sh")
+/// 探测烧录器串口当前是否可打开（短超时探测，同 device::ops::can_open）。
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn burner_openable() -> bool {
+    use std::time::Duration;
+    for name in burner_port_names() {
+        if serialport::new(&name, 115_200)
+            .timeout(Duration::from_millis(50))
+            .open()
+            .is_ok()
+        {
+            return true;
+        }
+    }
+    // 设备未枚举（刚释放占用、驱动重载中）视为可通过——由随后的 detect 最终确认
+    burner_port_names().is_empty()
+}
+
+// ---------------------------------------------------------------------------
+// macOS：结束占用者 → 提权修复设备节点权限（osascript 管理员 = pkexec 等价）
+// ---------------------------------------------------------------------------
+
+/// 结束持有 /dev/cu.usb* 串口的同用户进程（lsof 定位）。返回结束的数量。
+#[cfg(target_os = "macos")]
+fn mac_kill_holders() -> usize {
+    let Ok(out) = std::process::Command::new("/bin/sh")
         .arg("-c")
         .arg("lsof -F p /dev/cu.usbmodem* /dev/cu.usbserial* 2>/dev/null")
-        .output();
-    let Ok(out) = out else {
-        say(json, "failed", i18n::t("udev.mac_lsof_fail").to_string());
-        return ExitCode::from(1);
+        .output()
+    else {
+        return 0;
     };
-
-    // lsof -F p：每个持有进程一行 p<PID>；去重并排除自身
     let mut pids: Vec<u32> = String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| l.starts_with('p'))
@@ -194,12 +227,6 @@ fn cmd_udev_macos(json: bool, print_only: bool) -> ExitCode {
         .collect();
     pids.sort_unstable();
     pids.dedup();
-
-    if pids.is_empty() {
-        say(json, "none", i18n::t("udev.mac_none").to_string());
-        return ExitCode::SUCCESS;
-    }
-
     let mut killed = 0usize;
     for pid in &pids {
         let ok = std::process::Command::new("kill")
@@ -212,38 +239,69 @@ fn cmd_udev_macos(json: bool, print_only: bool) -> ExitCode {
             killed += 1;
         }
     }
+    killed
+}
 
-    if killed == pids.len() {
+#[cfg(target_os = "macos")]
+fn cmd_udev_macos(json: bool, print_only: bool) -> ExitCode {
+    if print_only {
+        say(json, "manual", i18n::t("udev.mac_manual").to_string());
+        return ExitCode::SUCCESS;
+    }
+
+    say(json, "checking", i18n::t("udev.mac_checking").to_string());
+
+    // 第一阶段：结束占用进程（无需提权）
+    let killed = mac_kill_holders();
+    if killed > 0 {
         say(
             json,
             "fixed",
             i18n::tf("udev.mac_fixed", &[("n", &killed.to_string())]),
         );
-        ExitCode::SUCCESS
-    } else {
-        // 有持有者属于其他用户（kill 被拒）：给出手动指引
-        say(
-            json,
-            "manual",
-            i18n::tf(
-                "udev.mac_manual_holders",
-                &[("n", &(pids.len() - killed).to_string())],
-            ),
-        );
-        ExitCode::from(1)
+        return ExitCode::SUCCESS;
+    }
+
+    // 第二阶段：无占用者仍打不开 → 设备节点权限被改（受管 Mac 等）。
+    // 提权修复：osascript 管理员权限（原生密码框，pkexec 等价）chmod 设备节点。
+    say(json, "prompt", i18n::t("udev.mac_stage2").to_string());
+    let script = "do shell script \"chmod 666 /dev/cu.usbmodem* /dev/cu.usbserial* 2>/dev/null; true\" with administrator privileges";
+    let status = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .status();
+
+    let canceled = matches!(status, Ok(s) if s.code() == Some(1)); // osascript 取消 = exit 1
+    match status {
+        Ok(s) if s.success() => {
+            if burner_openable() {
+                say(json, "installed", i18n::t("udev.mac_installed").to_string());
+                return ExitCode::SUCCESS;
+            }
+            say(json, "failed", i18n::t("udev.mac_failed").to_string());
+            ExitCode::from(1)
+        }
+        _ if canceled => {
+            say(json, "canceled", i18n::t("udev.mac_canceled").to_string());
+            ExitCode::from(1)
+        }
+        _ => {
+            say(json, "failed", i18n::t("udev.mac_failed").to_string());
+            ExitCode::from(1)
+        }
     }
 }
 
 /// 非 macOS 平台的空实现：使 cmd_udev 的调用处在所有平台均可编译。
 #[cfg(not(target_os = "macos"))]
 fn cmd_udev_macos(json: bool, print_only: bool) -> ExitCode {
-    let _ = print_only;
+    let _ = (json, print_only);
     say(json, "skipped", i18n::t("udev.linux_only").to_string());
     ExitCode::SUCCESS
 }
 
 // ---------------------------------------------------------------------------
-// Windows：结束占用串口的残留进程（SkyEmu / 卡死的 cfb 实例）
+// Windows：结束占用者 → 提权修复设备状态（UAC + PnpDevice 重新启用）
 // ---------------------------------------------------------------------------
 
 /// 列出指定映像名的全部 PID（tasklist CSV：第 2 列为 PID）。
@@ -257,17 +315,15 @@ fn pids_of_image(image: &str) -> Vec<u32> {
     };
     String::from_utf8_lossy(&out.stdout)
         .lines()
-        .filter_map(|line| line.split(r#",""#).nth(1))
+        .filter_map(|line| line.split("\",\"").nth(1))
         .filter_map(|f| f.trim_matches('"').trim().parse::<u32>().ok())
         .collect()
 }
 
-/// Windows 上 COM 口没有用户态权限问题，打不开几乎都是**被其他进程占用**：
-/// DirectPlay 残留的 SkyEmu、上次操作卡死未退出的 cfb 实例。结束它们（排除自身
-/// 避免自杀），客户端随后重新 detect 即可接上。不弹任何系统对话框。
+/// 结束占用串口的残留进程：DirectPlay 残留的 SkyEmu、卡死未退出的 cfb 实例
+/// （排除自身避免自杀）。返回结束的数量。
 #[cfg(target_os = "windows")]
-fn cmd_udev_windows(json: bool) -> ExitCode {
-    say(json, "checking", i18n::t("udev.win_checking").to_string());
+fn win_kill_holders() -> usize {
     let me = std::process::id();
     let mut targets: Vec<u32> = Vec::new();
     for image in ["SkyEmu.exe", "cfb.exe"] {
@@ -277,12 +333,6 @@ fn cmd_udev_windows(json: bool) -> ExitCode {
             }
         }
     }
-
-    if targets.is_empty() {
-        say(json, "none", i18n::t("udev.win_none").to_string());
-        return ExitCode::SUCCESS;
-    }
-
     let mut killed = 0usize;
     for pid in &targets {
         let ok = std::process::Command::new("taskkill")
@@ -294,31 +344,102 @@ fn cmd_udev_windows(json: bool) -> ExitCode {
             killed += 1;
         }
     }
+    killed
+}
 
-    if killed == targets.len() {
+/// 提权修复脚本（由 UAC 提权的 PowerShell 执行）：重新启用状态异常/被禁用的
+/// 烧录器设备实例（0483:0721），触发驱动重枚举，并把结果写入文件供回读。
+#[cfg(target_os = "windows")]
+fn win_repair_script(result_path: &std::path::Path) -> String {
+    format!(
+        concat!(
+            "$ErrorActionPreference = 'SilentlyContinue'\n",
+            "$devs = Get-PnpDevice -PresentOnly | Where-Object {{ $_.InstanceId -like 'USB\\VID_0483&PID_0721*' }}\n",
+            "$fixed = 0\n",
+            "foreach ($d in $devs) {{\n",
+            "  if ($d.Status -ne 'OK') {{\n",
+            "    Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false\n",
+            "    $fixed++\n",
+            "  }}\n",
+            "}}\n",
+            "Set-Content -Path '{path}' -Value ('fixed=' + $fixed)\n"
+        ),
+        path = result_path.display().to_string().replace('\\', "\\\\")
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn cmd_udev_windows(json: bool, print_only: bool) -> ExitCode {
+    if print_only {
+        say(json, "manual", i18n::t("udev.win_manual").to_string());
+        return ExitCode::SUCCESS;
+    }
+
+    say(json, "checking", i18n::t("udev.win_checking").to_string());
+
+    // 第一阶段：结束占用进程（无需提权）
+    let killed = win_kill_holders();
+    if killed > 0 {
         say(
             json,
             "fixed",
             i18n::tf("udev.win_fixed", &[("n", &killed.to_string())]),
         );
-        ExitCode::SUCCESS
-    } else {
+        return ExitCode::SUCCESS;
+    }
+
+    // 第二阶段：无占用进程仍打不开 → 设备被禁用/状态异常。
+    // 提权修复：UAC（原生确认框）→ 管理员 PowerShell 用 PnpDevice 重新启用烧录器设备实例。
+    say(json, "prompt", i18n::t("udev.win_stage2").to_string());
+    let tmp = std::env::temp_dir();
+    let repair = tmp.join("chisflash-perm-repair.ps1");
+    let result = tmp.join("chisflash-perm-result.txt");
+    let _ = std::fs::remove_file(&result);
+    if let Err(e) = std::fs::write(&repair, win_repair_script(&result)) {
         say(
             json,
-            "manual",
-            i18n::tf(
-                "udev.win_manual_holders",
-                &[("n", &(targets.len() - killed).to_string())],
-            ),
+            "failed",
+            i18n::tf("udev.write_fail", &[("err", &e.to_string())]),
         );
-        ExitCode::from(1)
+        return ExitCode::from(1);
     }
+
+    // Start-Process -Verb RunAs 弹 UAC；-Wait 等提权子进程结束；取消 UAC 时外层报错。
+    let outer = format!(
+        "Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','{}' -Verb RunAs -Wait; $ok = $?",
+        repair.display().to_string().replace('\'', "''")
+    );
+    let status = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", &outer])
+        .status();
+    let _ = std::fs::remove_file(&repair);
+
+    let result_text = std::fs::read_to_string(&result).unwrap_or_default();
+    let _ = std::fs::remove_file(&result);
+
+    let canceled = matches!(status, Ok(s) if !s.success());
+
+    if result_text.contains("fixed=0") && !canceled {
+        // 设备状态本来就正常：问题不在设备层（可能为驱动级），如实报告
+        say(json, "failed", i18n::t("udev.win_failed").to_string());
+        return ExitCode::from(1);
+    }
+    if burner_openable() {
+        say(json, "installed", i18n::t("udev.win_installed").to_string());
+        return ExitCode::SUCCESS;
+    }
+    if canceled {
+        say(json, "canceled", i18n::t("udev.win_canceled").to_string());
+    } else {
+        say(json, "failed", i18n::t("udev.win_failed").to_string());
+    }
+    ExitCode::from(1)
 }
 
 /// 非 Windows 平台的空实现：使 cmd_udev 的调用处在所有平台均可编译。
 #[cfg(not(target_os = "windows"))]
-fn cmd_udev_windows(json: bool) -> ExitCode {
-    let _ = json;
+fn cmd_udev_windows(json: bool, print_only: bool) -> ExitCode {
+    let _ = (json, print_only);
     say(json, "skipped", i18n::t("udev.linux_only").to_string());
     ExitCode::SUCCESS
 }
