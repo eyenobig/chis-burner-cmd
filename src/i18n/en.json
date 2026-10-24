@@ -207,5 +207,9 @@
   "udev.mac_none": "No process is holding the serial port. If it still won't open, replug the device or check driver approval in System Settings.",
   "udev.mac_manual_holders": "{n} holder(s) belong to another user and couldn't be closed — quit that app manually, then run `cfb detect` again.",
   "udev.mac_manual": "macOS needs no udev rules. A port that won't open is usually held by another app — this fix releases such holders.",
-  "udev.mac_lsof_fail": "Failed to scan port holders (lsof)."
+  "udev.mac_lsof_fail": "Failed to scan port holders (lsof).",
+  "udev.win_checking": "Scanning for apps holding the serial port (SkyEmu / stuck burner processes)…",
+  "udev.win_fixed": "Serial port released (closed {n} process(es)) ✅  Run `cfb detect` again to connect.",
+  "udev.win_none": "No holding process found. If the port still won't open, replug the device.",
+  "udev.win_manual_holders": "{n} process(es) couldn't be closed — close them manually, then run `cfb detect` again."
 }

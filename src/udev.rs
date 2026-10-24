@@ -66,8 +66,11 @@ pub fn cmd_udev(json: bool, print_only: bool) -> ExitCode {
     if cfg!(target_os = "macos") {
         return cmd_udev_macos(json, print_only);
     }
+    if cfg!(target_os = "windows") {
+        return cmd_udev_windows(json);
+    }
     if !cfg!(target_os = "linux") {
-        // Windows 无需（也无此机制）；安静跳过，客户端按 phase=skipped 处理。
+        // 其余 unix 无此机制；安静跳过，客户端按 phase=skipped 处理。
         say(json, "skipped", i18n::t("udev.linux_only").to_string());
         return ExitCode::SUCCESS;
     }
@@ -235,6 +238,87 @@ fn cmd_udev_macos(json: bool, print_only: bool) -> ExitCode {
 #[cfg(not(target_os = "macos"))]
 fn cmd_udev_macos(json: bool, print_only: bool) -> ExitCode {
     let _ = print_only;
+    say(json, "skipped", i18n::t("udev.linux_only").to_string());
+    ExitCode::SUCCESS
+}
+
+// ---------------------------------------------------------------------------
+// Windows：结束占用串口的残留进程（SkyEmu / 卡死的 cfb 实例）
+// ---------------------------------------------------------------------------
+
+/// 列出指定映像名的全部 PID（tasklist CSV：第 2 列为 PID）。
+#[cfg(target_os = "windows")]
+fn pids_of_image(image: &str) -> Vec<u32> {
+    let Ok(out) = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("IMAGENAME eq {image}"), "/FO", "CSV", "/NH"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| line.split(r#",""#).nth(1))
+        .filter_map(|f| f.trim_matches('"').trim().parse::<u32>().ok())
+        .collect()
+}
+
+/// Windows 上 COM 口没有用户态权限问题，打不开几乎都是**被其他进程占用**：
+/// DirectPlay 残留的 SkyEmu、上次操作卡死未退出的 cfb 实例。结束它们（排除自身
+/// 避免自杀），客户端随后重新 detect 即可接上。不弹任何系统对话框。
+#[cfg(target_os = "windows")]
+fn cmd_udev_windows(json: bool) -> ExitCode {
+    say(json, "checking", i18n::t("udev.win_checking").to_string());
+    let me = std::process::id();
+    let mut targets: Vec<u32> = Vec::new();
+    for image in ["SkyEmu.exe", "cfb.exe"] {
+        for pid in pids_of_image(image) {
+            if pid != me && !targets.contains(&pid) {
+                targets.push(pid);
+            }
+        }
+    }
+
+    if targets.is_empty() {
+        say(json, "none", i18n::t("udev.win_none").to_string());
+        return ExitCode::SUCCESS;
+    }
+
+    let mut killed = 0usize;
+    for pid in &targets {
+        let ok = std::process::Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if ok {
+            killed += 1;
+        }
+    }
+
+    if killed == targets.len() {
+        say(
+            json,
+            "fixed",
+            i18n::tf("udev.win_fixed", &[("n", &killed.to_string())]),
+        );
+        ExitCode::SUCCESS
+    } else {
+        say(
+            json,
+            "manual",
+            i18n::tf(
+                "udev.win_manual_holders",
+                &[("n", &(targets.len() - killed).to_string())],
+            ),
+        );
+        ExitCode::from(1)
+    }
+}
+
+/// 非 Windows 平台的空实现：使 cmd_udev 的调用处在所有平台均可编译。
+#[cfg(not(target_os = "windows"))]
+fn cmd_udev_windows(json: bool) -> ExitCode {
+    let _ = json;
     say(json, "skipped", i18n::t("udev.linux_only").to_string());
     ExitCode::SUCCESS
 }
