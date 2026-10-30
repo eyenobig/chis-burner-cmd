@@ -61,7 +61,7 @@ jobs:
             bin: cfb
             artifact: cfb-x86_64-apple-darwin
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-latest
             bin: cfb
             artifact: cfb-aarch64-apple-darwin
 
@@ -104,10 +104,8 @@ jobs:
   release:
     name: release
     needs: build
-    # needs 一个矩阵作业默认「任一失败即整条 skip」。这里用 !cancelled() 放宽：
-    # 只要有作业跑过（非手动取消），就尝试发布**已成功**的平台，单平台偶发失败不阻塞发版。
-    # 下游「至少有一个二进制」由 flatten 步骤的硬校验兜底。
-    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
+    # 只有四个平台全部成功才发布，避免下游获取到缺平台的版本。
+    if: ${{ success() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
       # 取仓库代码，仅为读 CHANGELOG.md（发版正文的唯一来源，见 docs/ci.md）。
@@ -119,11 +117,7 @@ jobs:
         with:
           submodules: true
 
-      # 关掉 download 的 fail，允许部分 build 作业没产出 artifact 时继续。
-      # （download-artifact@v4 在「一个 artifact 都没有」时会失败，这里 continue-on-error
-      #   放过它，真正的「空」兜底在 flatten 步骤。）
       - uses: actions/download-artifact@v4
-        continue-on-error: true
         with:
           path: artifacts
           merge-multiple: true
@@ -135,11 +129,9 @@ jobs:
           find artifacts -type f -name 'cfb-*' -exec cp {} release/ \;
           echo "── 已就绪的 sidecar："
           ls -l release/
-          # 兜底：至少要有一个二进制可发，否则发空 Release 毫无意义。
-          if [ -z "$(find release -type f -name 'cfb-*')" ]; then
-            echo "::error::没有任何 build 作业产出 cfb 二进制，无法发版。"
-            exit 1
-          fi
+          for asset in cfb-x86_64-pc-windows-msvc.exe cfb-x86_64-unknown-linux-gnu cfb-x86_64-apple-darwin cfb-aarch64-apple-darwin; do
+            test -s "release/$asset" || { echo "::error::Missing $asset"; exit 1; }
+          done
 
       # 从 CHANGELOG.md 抽取当前 tag（如 v0.1.0）那一节，作为 Release 正文。
       # 抽不到（漏写/格式不符）不阻断发版——下一步会退回 GitHub 自动生成。

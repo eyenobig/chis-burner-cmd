@@ -1,0 +1,43 @@
+name: Repair released macOS ARM64 asset
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to rebuild without moving the tag
+        required: true
+        default: v0.5.3
+permissions:
+  contents: write
+jobs:
+  repair:
+    runs-on: macos-latest
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64-apple-darwin
+      - name: Verify existing tag and release
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh release view "$RELEASE_TAG" >/dev/null
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          test "v$version" = "$RELEASE_TAG"
+      - name: Build and smoke-test original tagged source
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --target aarch64-apple-darwin
+          target/aarch64-apple-darwin/release/cfb help
+          cp target/aarch64-apple-darwin/release/cfb cfb-aarch64-apple-darwin
+      - name: Upload missing ARM64 asset
+        run: gh release upload "$RELEASE_TAG" cfb-aarch64-apple-darwin --clobber
