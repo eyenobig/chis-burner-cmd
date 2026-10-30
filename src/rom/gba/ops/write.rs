@@ -22,6 +22,9 @@ const PACKET: usize = 4096;
 const SECTOR_U64: u64 = SECTOR as u64;
 
 /// 连续编程 [from,to)。`rom_program` 内已 4× DTR；包失败即停。返回首个失败地址或 None。
+///
+/// `bail_first_packet`：首包（pos == from）连挂 2 次即返回，交给调用方插拔后整段重试。
+/// 首包就不过多半是 MCU/总线没清干净，原地 0xF0+DTR 救不回来，再挂满 5×4 次只是白等约 1 分钟。
 fn program_flow(
     link: &mut CartridgeLink,
     rom: &[u8],
@@ -31,6 +34,7 @@ fn program_flow(
     res: &mut BurnResult,
     total: u64,
     progress: &mut dyn FnMut(u64, u64),
+    bail_first_packet: bool,
 ) -> Option<u64> {
     let mut pos = from;
     // 包级原地重试：新批次烧录器持续写入会偶发掉包（rom_program 内部 4 次 MCU 复位
@@ -43,7 +47,7 @@ fn program_flow(
 
         if !link.rom_program(pos as u32, pk, buf_wr) {
             fail_streak += 1;
-            if fail_streak >= 5 {
+            if fail_streak >= 5 || (bail_first_packet && pos == from && fail_streak >= 2) {
                 return Some(pos);
             }
             link.reset_mcu_buffer();
@@ -169,7 +173,7 @@ pub fn burn(
             }
         };
         if let Some(fail) =
-            program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress)
+            program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress, false)
         {
             log(&i18n::tf("log.write_fail_dtr", &[("addr", &format!("{fail:08X}"))]));
             res.first_bad = Some(fail);
@@ -219,14 +223,22 @@ pub fn burn(
         }
 
         if erase_ok {
-            // 擦后稳定化。空白跳过时本进程没发 0x30，必须插拔清 MCU 再写，否则 @0x2000 卡死。
+            // 擦后稳定化：两条路径都插拔清 MCU 再写。
+            // 空白跳过时本进程没发 0x30，不插拔会 @0x2000 卡死；
+            // 真擦过（逐扇区 0x30）后只复位不插拔，首包常在 @0x0 连挂 5×4 次（约 1 分钟）
+            // 才靠整段重试里的插拔恢复——与 MBC 路径（擦后 soft_unplug_3v3）对齐。
             gba_reset_flash(link);
             if skipped_erase {
                 log(&i18n::t("log.blank_unplug"));
-                let _ = link.soft_unplug_gba();
             } else {
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                log(&i18n::t("log.unplug_after_erase"));
             }
+            if let Err(e) = link.soft_unplug_gba() {
+                log(&i18n::tf("log.gba_unplug_fail", &[("err", &e.to_string())]));
+            }
+            // 同整段重试的恢复序列：插拔 → 复位 → 100ms
+            gba_reset_flash(link);
+            std::thread::sleep(std::time::Duration::from_millis(100));
             log(&i18n::tf(
                 "log.erase_done_write",
                 &[("n", &total_erase_sectors.to_string())],
@@ -241,7 +253,7 @@ pub fn burn(
                         log(&write_plog.format(d, t));
                     }
                 };
-                match program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress) {
+                match program_flow(link, rom, 0, length, buf_wr, &mut res, length, &mut write_progress, true) {
                     None => break,
                     Some(fail) if write_attempt < 3 => {
                         log(&i18n::tf(
@@ -306,6 +318,7 @@ pub fn burn(
                         &mut res,
                         length,
                         &mut write_progress,
+                        false,
                     ) {
                         log(&i18n::tf("log.repair_write_fail", &[("addr", &format!("{fail:08X}"))]));
                     }
