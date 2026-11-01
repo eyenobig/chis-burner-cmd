@@ -34,6 +34,8 @@ pub struct CartridgeLink {
     sp: Option<Box<dyn SerialPort>>,
     /// 单次应答超时。对齐 WinForms `responTimeoutMs=3000`（Core/旧 cfb 曾用 800，大 ROM 易误判）。
     response_timeout: Duration,
+    /// 仅记录协议操作码和地址，绝不记录传输内容。
+    last_request: String,
 }
 
 fn addr4(a: u32) -> [u8; 4] {
@@ -51,6 +53,7 @@ impl CartridgeLink {
             port_name: port.to_string(),
             sp: None,
             response_timeout: Duration::from_millis(3000),
+            last_request: String::new(),
         }
     }
 
@@ -62,6 +65,7 @@ impl CartridgeLink {
     /// 被占用（如 SkyEmu 直读会话）时走端口租约自动让渡握手（见 [`crate::lease`]）。
     pub fn open(&mut self) -> std::io::Result<()> {
         self.close();
+        crate::diagnostics::stage("lease", "start", "等待串口租约");
         crate::lease::acquire(&self.port_name).map_err(|e| {
             let crate::lease::AcquireError::Timeout { holder, waited_secs } = &e;
             let (name, pid) = holder
@@ -77,22 +81,31 @@ impl CartridgeLink {
                     ("s", &waited_secs.to_string()),
                 ],
             );
+            crate::diagnostics::stage("lease", "failed", &msg);
             std::io::Error::new(std::io::ErrorKind::PermissionDenied, msg)
         })?;
+        crate::diagnostics::stage("lease", "ok", "已获取串口租约");
+        crate::diagnostics::stage("open_port", "start", "打开系统串口句柄");
         let sp = match open_serial(&self.port_name) {
             Ok(s) => s,
             Err(first) => {
                 // 拒绝访问：可能持有者开口后还没写租约（毫秒级窗口），或是不参与协议的进程。
                 // 稍候重跑一次握手（幂等），再试一口；仍失败按原错误上报。
                 let desc = first.to_string();
+                crate::diagnostics::failure("open_serial", &desc);
                 if matches!(first.kind(), serialport::ErrorKind::Io(std::io::ErrorKind::PermissionDenied)) {
                     eprintln!("{}", crate::i18n::t("lease.retry"));
                     std::thread::sleep(Duration::from_millis(400));
-                    if crate::lease::acquire(&self.port_name).is_ok() {
-                        if let Ok(s) = open_serial(&self.port_name) {
-                            s
-                        } else {
-                            return Err(std::io::Error::new(std::io::ErrorKind::Other, desc));
+                    if crate::lease::acquire(&self.port_name).map_err(|error| {
+                        crate::diagnostics::failure("lease_retry", &format!("{error:?}"));
+                        error
+                    }).is_ok() {
+                        match open_serial(&self.port_name) {
+                            Ok(s) => s,
+                            Err(error) => {
+                                crate::diagnostics::failure("open_serial_retry", &error.to_string());
+                                return Err(std::io::Error::new(std::io::ErrorKind::Other, desc));
+                            }
                         }
                     } else {
                         return Err(std::io::Error::new(std::io::ErrorKind::Other, desc));
@@ -103,9 +116,12 @@ impl CartridgeLink {
             }
         };
         self.sp = Some(sp);
+        crate::diagnostics::stage("open_port", "ok", "系统串口句柄已打开");
+        crate::diagnostics::stage("reset", "start", "DTR/RTS 复位并清空缓冲区");
         self.toggle_reset_lines();
         std::thread::sleep(Duration::from_millis(60));
         self.discard_all();
+        crate::diagnostics::stage("reset", "done", "串口复位操作结束");
         Ok(())
     }
 
@@ -175,15 +191,23 @@ impl CartridgeLink {
     // DTR/RTS 置位再清零：重置单片机内的命令 buffer。
     fn toggle_reset_lines(&mut self) {
         if let Some(sp) = self.sp.as_mut() {
-            let _ = sp.write_request_to_send(true);
-            let _ = sp.write_data_terminal_ready(true);
+            if let Err(error) = sp.write_request_to_send(true) {
+                crate::diagnostics::failure("reset_rts_high", &error.to_string());
+            }
+            if let Err(error) = sp.write_data_terminal_ready(true) {
+                crate::diagnostics::failure("reset_dtr_high", &error.to_string());
+            }
             // 必须保持再释放: Linux(termios ioctl) 下控制线翻转是即时的, 零间隔
             // 的脉冲固件看不到, 串口不会进入协议模式 → 全部命令无应答
             //(WSL/usbip 实测 "No cartridge detected"; Windows 驱动因系统调用
             // 延迟侥幸可用)。python/SkyEmu 的复位序列均保持 ~60ms。
             std::thread::sleep(Duration::from_millis(60));
-            let _ = sp.write_request_to_send(false);
-            let _ = sp.write_data_terminal_ready(false);
+            if let Err(error) = sp.write_request_to_send(false) {
+                crate::diagnostics::failure("reset_rts_low", &error.to_string());
+            }
+            if let Err(error) = sp.write_data_terminal_ready(false) {
+                crate::diagnostics::failure("reset_dtr_low", &error.to_string());
+            }
             std::thread::sleep(Duration::from_millis(60));
         }
     }
@@ -198,7 +222,9 @@ impl CartridgeLink {
 
     fn discard_all(&mut self) {
         if let Some(sp) = self.sp.as_mut() {
-            let _ = sp.clear(ClearBuffer::All);
+            if let Err(error) = sp.clear(ClearBuffer::All) {
+                crate::diagnostics::failure("clear_buffers", &error.to_string());
+            }
         }
     }
 
@@ -237,16 +263,27 @@ impl CartridgeLink {
     // ---------------- 低层收发 ----------------
 
     fn send_package(&mut self, payload: &[u8]) -> std::io::Result<()> {
+        if crate::diagnostics::enabled() {
+            self.last_request = match payload.first() {
+                Some(op) if payload.len() >= 5 && *op != 0xa0 => format!(
+                    "opcode=0x{op:02X} address=0x{:08X}",
+                    u32::from_le_bytes([payload[1], payload[2], payload[3], payload[4]])),
+                Some(op) => format!("opcode=0x{op:02X}"),
+                None => "empty_request".into(),
+            };
+        }
         let size = 2 + payload.len() + 2; // 含末尾 2 字节(忽略的)CRC
         let mut buf = vec![0u8; size];
         buf[0] = (size & 0xff) as u8;
         buf[1] = ((size >> 8) & 0xff) as u8;
         buf[2..2 + payload.len()].copy_from_slice(payload);
-        let sp = self
-            .sp
-            .as_mut()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotConnected, "port not open"))?;
-        sp.write_all(&buf)
+        let result = self.sp.as_mut()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotConnected, "port not open"))
+            .and_then(|sp| sp.write_all(&buf));
+        if let Err(error) = &result {
+            crate::diagnostics::failure("serial_write", &format!("{}: {error}", self.last_request));
+        }
+        result
     }
 
     // 读满 buf.len() 字节，超时(自上次有数据起)返回 false。
@@ -254,13 +291,23 @@ impl CartridgeLink {
         let timeout = self.response_timeout;
         let sp = match self.sp.as_mut() {
             Some(s) => s,
-            None => return false,
+            None => {
+                crate::diagnostics::failure("serial_read", "port not open");
+                return false;
+            }
         };
         let n = buf.len();
         let mut got = 0usize;
         let mut last = Instant::now();
+        let mut reported_poll_error = false;
         while got < n {
-            let avail = sp.bytes_to_read().unwrap_or(0) as usize;
+            let avail = sp.bytes_to_read().unwrap_or_else(|error| {
+                if !reported_poll_error {
+                    crate::diagnostics::failure("bytes_to_read", &error.to_string());
+                    reported_poll_error = true;
+                }
+                0
+            }) as usize;
             if avail > 0 {
                 let to = avail.min(n - got);
                 match sp.read(&mut buf[got..got + to]) {
@@ -270,10 +317,16 @@ impl CartridgeLink {
                     }
                     Ok(_) => {}
                     Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
-                    Err(_) => return false,
+                    Err(error) => {
+                        crate::diagnostics::failure("serial_read", &format!(
+                            "{} expected={n} received={got}: {error}", self.last_request));
+                        return false;
+                    }
                 }
             } else {
                 if last.elapsed() > timeout {
+                    crate::diagnostics::failure("serial_read_timeout", &format!(
+                        "{} expected={n} received={got} timeout_ms={}", self.last_request, timeout.as_millis()));
                     return false;
                 }
                 std::thread::sleep(Duration::from_micros(200));
@@ -289,6 +342,10 @@ impl CartridgeLink {
             return false;
         }
         self.discard_all();
+        if b[0] != 0xaa {
+            crate::diagnostics::failure("unexpected_ack", &format!(
+                "{} expected=0xAA received=0x{:02X}", self.last_request, b[0]));
+        }
         b[0] == 0xaa
     }
 

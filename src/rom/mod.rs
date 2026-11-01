@@ -19,14 +19,17 @@ use mbc::data::MbcHeader;
 
 /// `cfb info` —— 读 flash 芯片 + 卡带/游戏信息（人类可读 / `--json`）。
 pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
+    let _diagnostics = crate::diagnostics::begin(json, port.clone(), mbc);
     // 与 burn/erase 共用 open_powered，避免 info 自管上电时序与成功路径不一致。
     // 接触抖动最多再整段重开 1 次。
     let mut last_err: Option<String> = None;
     for attempt in 0..2 {
+        crate::diagnostics::attempt(attempt + 1);
         if attempt > 0 {
             std::thread::sleep(std::time::Duration::from_millis(if mbc { 80 } else { 60 }));
         }
         let Some(mut link) = open_powered(json, "info", port.clone(), mbc) else {
+            crate::diagnostics::stage("complete", "failed", "串口打开或设备初始化失败");
             return ExitCode::from(3);
         };
         let port_name = link_port_name(&link);
@@ -34,15 +37,21 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
         if mbc {
             // 头与 CFI 互相干扰：先 CFI 则头区常读全 FF；先大块读头则 CFI 偶发容量 0。
             // 策略：短探头 → CFI；有效头或 CFI 有容量即成功（空片靠 CFI，有游戏靠头）。
+            crate::diagnostics::stage("mbc_header", "start", "读取 GB/GBC 游戏头");
             let probe = mbc::ops::read::probe_live_header(&mut link);
+            crate::diagnostics::stage("mbc_header", "done", "游戏头探测结束，继续读取芯片容量");
+            crate::diagnostics::stage("mbc_flash", "start", "读取 GB/GBC CFI");
             let (capacity, buffer) = mbc::ops::read::rom_get_size(&mut link);
+            crate::diagnostics::stage("mbc_flash", "done", &format!("capacity={capacity} buffer={buffer}"));
             let raw = match probe {
                 mbc::ops::read::HeaderProbe::Valid(h) => Some(h),
                 mbc::ops::read::HeaderProbe::NoGame if capacity > 0 => Some([0xFFu8; 0x180]),
                 mbc::ops::read::HeaderProbe::NoGame => None,
             };
             if let Some(raw) = raw {
+                crate::diagnostics::stage("power_idle", "start", "恢复空闲供电");
                 device::power_idle(&mut link);
+                crate::diagnostics::stage("power_idle", "done", "空闲供电操作结束");
                 let _ = crate::config::save_selected(&port_name);
                 if json {
                     emit_mbc_info(&port_name, capacity, buffer, &raw);
@@ -56,21 +65,31 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
                         enrich_mbc(&raw, &header),
                     );
                 }
+                crate::diagnostics::stage("complete", "ok", "GB/GBC 识别完成");
                 return ExitCode::SUCCESS;
             }
+            crate::diagnostics::stage("mbc_flash", "failed", "未识别到有效头部或芯片容量，将重试");
+            crate::diagnostics::stage("power_idle", "start", "恢复空闲供电");
             device::power_idle(&mut link);
+            crate::diagnostics::stage("power_idle", "done", "空闲供电操作结束");
             last_err = Some(i18n::t("info.no_cartridge"));
             continue;
         }
 
+        crate::diagnostics::stage("gba_flash", "start", "读取 GBA JEDEC ID 和 CFI");
         let flash = gba::ops::read_info(&mut link);
         let present = gba::ops::flash_present(&flash);
+        crate::diagnostics::stage("gba_flash", if present { "ok" } else { "failed" },
+            &format!("id={} capacity={}", flash.id_hex(), flash.device_size));
         if !present {
+            crate::diagnostics::stage("power_idle", "start", "恢复空闲供电");
             device::power_idle(&mut link);
+            crate::diagnostics::stage("power_idle", "done", "空闲供电操作结束");
             last_err = Some(i18n::t("info.no_cartridge"));
             continue;
         }
 
+        crate::diagnostics::stage("gba_header", "start", "读取 GBA 游戏头");
         let header = {
             let mut h = [0u8; 0x180];
             if link.rom_read(0, &mut h) {
@@ -84,14 +103,26 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
             Some(h) if gba::ops::is_gba_header(h) => CartridgeKind::Gba,
             _ => CartridgeKind::Unknown,
         };
+        crate::diagnostics::stage("gba_header", if header.is_some() { "done" } else { "failed" },
+            &format!("kind={} header_received={}", kind.as_str(), header.is_some()));
         // RTC 实测（须在 power_idle 之前，趁总线还活着）。只对确认是 GBA 头的卡做，
         // 免得对空片/非 GBA 卡白写一轮 GPIO。
         let rtc_probed = match kind {
-            CartridgeKind::Gba => gba::ops::rtc::detect(&mut link),
-            _ => false,
+            CartridgeKind::Gba => {
+                crate::diagnostics::stage("rtc", "start", "探测 GBA RTC");
+                let found = gba::ops::rtc::detect(&mut link);
+                crate::diagnostics::stage("rtc", "done", &format!("rtc_present={found}"));
+                found
+            }
+            _ => {
+                crate::diagnostics::stage("rtc", "skipped", "无有效 GBA 游戏头，跳过 RTC");
+                false
+            }
         };
 
+        crate::diagnostics::stage("power_idle", "start", "恢复空闲供电");
         device::power_idle(&mut link);
+        crate::diagnostics::stage("power_idle", "done", "空闲供电操作结束");
         let _ = crate::config::save_selected(&port_name);
 
         let game: Option<GbaHeader> = match (kind, header.as_ref()) {
@@ -122,9 +153,11 @@ pub fn cmd_info(json: bool, port: Option<String>, mbc: bool) -> ExitCode {
                 .map(|e| e.gn);
             print_human(&port_name, kind, &flash, game.as_ref(), friendly.as_deref());
         }
+        crate::diagnostics::stage("complete", "ok", "GBA 识别完成");
         return ExitCode::SUCCESS;
     }
 
+    crate::diagnostics::stage("complete", "failed", last_err.as_deref().unwrap_or("识别失败"));
     emit_or_eprint(json, last_err.as_deref().unwrap_or(&i18n::t("info.no_cartridge")));
     ExitCode::from(3)
 }
@@ -382,9 +415,11 @@ pub fn cmd_rom_info(json: bool, path: &str) -> ExitCode {
 /// 打开端口并按卡型上电。GBA **恒 3.3V**（无视 `voltage` 偏好）；MBC 读偏好否则默认 3.3V。
 /// GBA 额外 `warm_up`。MBC 烧录路径内经 `soft_unplug_3v3`；命令结束回 `power_idle`(3.3V)。
 fn open_powered(json: bool, cmd: &str, port: Option<String>, mbc: bool) -> Option<CartridgeLink> {
+    crate::diagnostics::stage("resolve_port", "start", "确定目标端口");
     let port = match device::resolve_port(port) {
         Some(p) => p,
         None => {
+            crate::diagnostics::stage("resolve_port", "failed", "没有找到目标烧录器端口");
             if json {
                 emit(&Event::Error {
                     command: cmd.to_string(),
@@ -397,13 +432,18 @@ fn open_powered(json: bool, cmd: &str, port: Option<String>, mbc: bool) -> Optio
             return None;
         }
     };
+    crate::diagnostics::port(&port);
+    crate::diagnostics::stage("resolve_port", "ok", &port);
     let mut link = CartridgeLink::new(&port);
     if let Err(e) = link.open() {
         op_err(json, cmd, &i18n::tf("info.err_open", &[("port", &port), ("err", &e.to_string())]));
         return None;
     }
     let kind = if mbc { CartridgeKind::GbMbc } else { CartridgeKind::Gba };
+    crate::diagnostics::stage("power", "start", if mbc { "GB/GBC 上电" } else { "GBA 3.3V 上电" });
     device::power(&mut link, device::voltage_for(kind));
+    crate::diagnostics::stage("power", "done", "供电命令结束");
+    crate::diagnostics::stage("warm_up", "start", "总线预热与复位");
     if !mbc {
         link.warm_up();
     } else {
@@ -412,6 +452,7 @@ fn open_powered(json: bool, cmd: &str, port: Option<String>, mbc: bool) -> Optio
         link.gbc_warm_up();
         mbc::ops::read::switch_bank(&mut link, 1, mbc::data::MbcKind::Mbc5);
     }
+    crate::diagnostics::stage("warm_up", "done", "总线初始化操作结束");
     Some(link)
 }
 

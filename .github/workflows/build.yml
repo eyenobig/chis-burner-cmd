@@ -163,6 +163,7 @@ jobs:
         with:
           files: release/*
           body_path: release-notes.md
+          draft: false
           generate_release_notes: false
           fail_on_unmatched_files: false
 
@@ -172,4 +173,5 @@ jobs:
         with:
           files: release/*
           generate_release_notes: true
+          draft: false
           fail_on_unmatched_files: false

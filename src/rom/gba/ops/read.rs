@@ -24,6 +24,7 @@ pub fn read_info(link: &mut CartridgeLink) -> FlashInfo {
 
     // 快路径 1 次；仅在 ID/CFI 都像悬空时再短重试 1 次（避免无卡带时拖满 3 轮）。
     for attempt in 0..2 {
+        crate::diagnostics::stage("gba_flash_attempt", "start", &format!("probe_attempt={}", attempt + 1));
         if attempt > 0 {
             link.rom_write(0x00, &[0xf0, 0x00]);
             std::thread::sleep(std::time::Duration::from_millis(15));
@@ -31,16 +32,24 @@ pub fn read_info(link: &mut CartridgeLink) -> FlashInfo {
         }
 
         let mut id_buf = [0u8; 8];
+        crate::diagnostics::stage("gba_jedec", "start", "读取 JEDEC ID");
         let id = if link.rom_read_id(&mut id_buf) {
             Some(id_buf)
         } else {
             None
         };
+        crate::diagnostics::stage("gba_jedec", if id.is_some() { "done" } else { "failed" }, "JEDEC 命令结束");
 
+        crate::diagnostics::stage("gba_cfi_enter", "start", "进入 CFI 模式");
         link.rom_write(0x55, &[0x98, 0x00]);
+        crate::diagnostics::stage("gba_cfi_enter", "done", "CFI 进入命令结束，失败情况见底层日志");
+        crate::diagnostics::stage("gba_cfi_read", "start", "读取 CFI 容量与几何信息");
         let mut cfi = [0u8; (0x34 - 0x27 + 1) * 2]; // 覆盖 word 0x27..0x34
         link.rom_read(0x27 << 1, &mut cfi);
+        crate::diagnostics::stage("gba_cfi_read", "done", "CFI 读取命令结束，失败情况见底层日志");
+        crate::diagnostics::stage("gba_cfi_reset", "start", "退出 CFI 模式");
         link.rom_write(0x00, &[0xf0, 0x00]);
+        crate::diagnostics::stage("gba_cfi_reset", "done", "CFI 复位命令结束，失败情况见底层日志");
 
         let cfi_word = |w: usize| cfi[(w - 0x27) * 2] as u32;
 
@@ -60,7 +69,9 @@ pub fn read_info(link: &mut CartridgeLink) -> FlashInfo {
             sector_size,
             sector_count,
         };
-        if flash_present(&flash) {
+        let present = flash_present(&flash);
+        crate::diagnostics::stage("gba_flash_attempt", "done", &format!("probe_attempt={} present={present}", attempt + 1));
+        if present {
             return flash;
         }
         // 保留「稍好」的一次（有 ID 或有容量），供最终判定。

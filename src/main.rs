@@ -28,6 +28,7 @@ mod event;
 mod gamedb;
 mod i18n;
 mod lease;
+mod diagnostics;
 mod profile;
 mod progress_display;
 mod rom;

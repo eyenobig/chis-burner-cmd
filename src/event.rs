@@ -20,6 +20,20 @@ pub struct RomChecksum {
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
+    /// info 的增量阶段日志；旧客户端可以忽略此新增类型。
+    Diagnostic {
+        command: String,
+        trace_id: String,
+        pid: u32,
+        port: Option<String>,
+        platform: String,
+        attempt: u32,
+        stage: String,
+        status: String,
+        elapsed_ms: u64,
+        stage_elapsed_ms: u64,
+        message: String,
+    },
     /// detect/select：一个烧录器（detect 只输出烧录器，不含其他串口）。
     Port {
         port: String,
